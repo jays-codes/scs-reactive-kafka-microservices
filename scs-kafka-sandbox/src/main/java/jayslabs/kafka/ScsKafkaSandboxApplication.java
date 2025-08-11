@@ -1,4 +1,4 @@
-package jayslabs.kafka.scs_kafka_sandbox;
+package jayslabs.kafka;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
