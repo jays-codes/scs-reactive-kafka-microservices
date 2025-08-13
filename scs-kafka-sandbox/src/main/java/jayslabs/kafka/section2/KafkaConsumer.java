@@ -16,6 +16,12 @@ public class KafkaConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaConsumer.class);
     
+
+    // @Bean
+    // public ReceiverOptionsCustomizer customizer(){
+    //     return (opts, dest) -> opts.consumerProperty("group.instance.id", "234");
+    // }
+
     @Bean
     public Consumer<Flux<String>> consumer() {
         return flux -> flux

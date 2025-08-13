@@ -2,6 +2,8 @@
 Jay's project/practice repo for Event-driven Microservices using Reactive Kafka and Spring Cloud Stream
 
 #### proj scs-kafka-sandbox (jayaslabs.kafka; SpringBoot 3.5.4, jdk 21; Clud Stream, Spring for Apache Kafka, Lombok, spring-cloud-stream-binder-kafka-reactive)
+- modified app.yaml to set properties based on kafka.binding (function-0, consumer-in-0)
+- added code for setting binding properties via @Bean via ReceiverOptionsCustomizer (deprecated)
 - modified app.yaml to define binder specific properties: spring.cloud.stream.kafka.binder.<configuration/producer-properties/consumer-properties>, set "group.instance.id" var
 - modified app.yaml to setup for active profiles, + application-section2.yaml, + application.yaml, modified sping app to use scanBasePackages appending active profile var ${sec}
 - modified KafkaConsumer to add another function bean - function():Function<Flux<String>,Mono<Void>>; modified application.yaml: added binding for function(), and set spring.cloud.function.definition to use function

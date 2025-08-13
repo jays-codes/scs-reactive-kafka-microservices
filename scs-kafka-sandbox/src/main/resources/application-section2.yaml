@@ -13,15 +13,36 @@
 #         function-in-0:
 #           destination: input-topic
 #           group: some-group
-# ---
 
+# --- kafka binder specific properties
+# spring:
+#   application:
+#     name: scs-kafka-sandbox
+#   cloud:
+#     function:
+#       definition:
+#         function
+#     stream:
+#       bindings:
+#         consumer-in-0:
+#           destination: input-topic
+#           group: some-group
+#         function-in-0:
+#           destination: input-topic
+#           group: some-group
+#       kafka:
+#         binder:
+#           consumerProperties:
+#             "group.instance.id": "123"
+
+# --- kafka bindings specific properties
 spring:
   application:
     name: scs-kafka-sandbox
   cloud:
     function:
       definition:
-        function
+        consumer
     stream:
       bindings:
         consumer-in-0:
@@ -31,10 +52,12 @@ spring:
           destination: input-topic
           group: some-group
       kafka:
-        binder:
-          consumerProperties:
-            "group.instance.id": "123"
-
-
-
-          
+        bindings:
+          function-in-0:
+            consumer:
+              configuration:
+                "group.instance.id": "567"
+          consumer-in-0:
+            consumer:
+              configuration:
+                "group.instance.id": "765"
