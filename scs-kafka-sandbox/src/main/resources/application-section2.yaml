@@ -1,3 +1,19 @@
+# --- with producer
+spring:
+  application:
+    name: scs-kafka-sandbox
+  cloud:
+    function:
+      definition:
+        producer;consumer
+    stream:
+      bindings:
+        producer-out-0:
+          destination: input-topic
+        consumer-in-0:
+          destination: input-topic
+          group: some-group
+
 # spring:
 #   application:
 #     name: scs-kafka-sandbox
@@ -36,28 +52,28 @@
 #             "group.instance.id": "123"
 
 # --- kafka bindings specific properties
-spring:
-  application:
-    name: scs-kafka-sandbox
-  cloud:
-    function:
-      definition:
-        consumer
-    stream:
-      bindings:
-        consumer-in-0:
-          destination: input-topic
-          group: some-group
-        function-in-0:
-          destination: input-topic
-          group: some-group
-      kafka:
-        bindings:
-          function-in-0:
-            consumer:
-              configuration:
-                "group.instance.id": "567"
-          consumer-in-0:
-            consumer:
-              configuration:
-                "group.instance.id": "765"
+# spring:
+#   application:
+#     name: scs-kafka-sandbox
+#   cloud:
+#     function:
+#       definition:
+#         consumer
+#     stream:
+#       bindings:
+#         consumer-in-0:
+#           destination: input-topic
+#           group: some-group
+#         function-in-0:
+#           destination: input-topic
+#           group: some-group
+#       kafka:
+#         bindings:
+#           function-in-0:
+#             consumer:
+#               configuration:
+#                 "group.instance.id": "567"
+#           consumer-in-0:
+#             consumer:
+#               configuration:
+#                 "group.instance.id": "765"

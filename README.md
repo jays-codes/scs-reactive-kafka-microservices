@@ -2,6 +2,7 @@
 Jay's project/practice repo for Event-driven Microservices using Reactive Kafka and Spring Cloud Stream
 
 #### proj scs-kafka-sandbox (jayaslabs.kafka; SpringBoot 3.5.4, jdk 21; Clud Stream, Spring for Apache Kafka, Lombok, spring-cloud-stream-binder-kafka-reactive)
+- created KafkaProducer with producer():Supplier<Flux<String>>
 - modified app.yaml to set properties based on kafka.binding (function-0, consumer-in-0)
 - added code for setting binding properties via @Bean via ReceiverOptionsCustomizer (deprecated)
 - modified app.yaml to define binder specific properties: spring.cloud.stream.kafka.binder.<configuration/producer-properties/consumer-properties>, set "group.instance.id" var
@@ -11,6 +12,7 @@ Jay's project/practice repo for Event-driven Microservices using Reactive Kafka 
 - initial project commit; updated pom reference for spring-cloud-stream-binder-kafka-reactive; readme update
 
 #### proj folder: kafka-setup
-- added docker-compose.yaml to setup docker (image: vinsdocker/kafka), volumes references server.properties; added /data/ to gitignore
+- added docker-compose.yaml to setup docker (image: vinsdocker/kafka), volumes r
+eferences server.properties; added /data/ to gitignore
 
 #### repo: scs-reactive-kafka-microservices
