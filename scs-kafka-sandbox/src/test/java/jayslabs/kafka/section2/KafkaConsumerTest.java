@@ -10,12 +10,24 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Bean;
+import org.springframework.test.context.TestPropertySource;
 
 import jayslabs.kafka.AbstractIntegrationTest;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+/*
+ * TODO: create test for KafkaConsumer.function()
+ */
+
+@TestPropertySource(properties = {
+    "sec=section2",
+    "spring.cloud.function.definition=consumer;testProducer",
+    "spring.cloud.stream.bindings.testProducer-out-0.destination=input-topic",
+    "logging.level.root=ERROR",
+    "logging.level.jayslabs.kafka*=INFO"
+})
 @ExtendWith(OutputCaptureExtension.class)
 public class KafkaConsumerTest extends AbstractIntegrationTest {
 
