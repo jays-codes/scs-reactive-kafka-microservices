@@ -1,19 +1,16 @@
 package jayslabs.kafka.section2;
 
 import java.time.Duration;
-import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
-import org.springframework.context.annotation.Bean;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.TestPropertySource;
 
 import jayslabs.kafka.AbstractIntegrationTest;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -28,6 +25,7 @@ import reactor.test.StepVerifier;
     "logging.level.root=ERROR",
     "logging.level.jayslabs.kafka*=INFO"
 })
+@ContextConfiguration(classes = KafkaConsumerTestConfiguration.class)
 @ExtendWith(OutputCaptureExtension.class)
 public class KafkaConsumerTest extends AbstractIntegrationTest {
 
@@ -50,12 +48,5 @@ public class KafkaConsumerTest extends AbstractIntegrationTest {
         .verifyComplete();
     }
 
-    @TestConfiguration
-    static class TestConfig{
 
-        @Bean
-        public Supplier<Flux<String>> testProducer(){
-            return () -> Flux.just("Hello World");
-        }
-    }
 }
