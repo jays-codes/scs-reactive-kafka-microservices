@@ -2,6 +2,7 @@
 Jay's project/practice repo for Event-driven Microservices using Reactive Kafka and Spring Cloud Stream
 
 #### proj scs-kafka-sandbox (jayaslabs.kafka; SpringBoot 3.5.4, jdk 21; Clud Stream, Spring for Apache Kafka, Lombok, spring-cloud-stream-binder-kafka-reactive)
+- src/test/java: create AbstractIntegrationTest (AIT) base test class (uses @EmbeddedKafka, @SpringbootTest, EmbeddedKafkaBroker - @Autowired); created KafkaConsumerTest (extends AIT, @ExtendWith OutputCaptureExtension) with @Test method testKafkaConsumer(CapturedOutput) - uses: Mono, .delay(), .then(), .fromSupplier(), Duration, output::getOut, Duration, .as(), StepVerifier, consumeNextWith(); Inner class @TestConfiguration TestConfig with testProducer():Supplier<Flux<String>>
 - prep workspace for integration test: removed dep:scs-test-binder, added SCSAppTest using @EmbeddedKafka
 - added code for setting binding properties via @Bean via SenderOptionsCustomizer (deprecated)
 - created KafkaProducer with producer():Supplier<Flux<String>>; modified app.yaml to add to scf.definition, scs.bindings (producer-out-0)
