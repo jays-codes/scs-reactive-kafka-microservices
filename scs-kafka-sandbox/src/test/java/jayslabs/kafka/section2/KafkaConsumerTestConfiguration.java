@@ -22,7 +22,7 @@ public class KafkaConsumerTestConfiguration {
     @Bean
     @Primary
     public Supplier<Flux<String>> testProducer(){
-        return () -> Flux.just("Hello World")
+        return () -> Flux.just("Hello World 123")
             .doOnNext(msg -> log.info("Test producer sending: {}", msg));
     }
 }

@@ -44,7 +44,7 @@ public class KafkaConsumerTest extends AbstractIntegrationTest {
         Mono.delay(Duration.ofSeconds(1))
         .then(Mono.fromSupplier(output::getOut))
         .as(StepVerifier::create)
-        .consumeNextWith(s -> Assertions.assertTrue(s.contains("Consumer Received message: Hello World")))
+        .consumeNextWith(s -> Assertions.assertTrue(s.contains("Consumer Received message: Hello World 123")))
         .verifyComplete();
     }
 
