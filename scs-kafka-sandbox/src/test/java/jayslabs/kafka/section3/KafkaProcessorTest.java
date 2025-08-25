@@ -1,65 +1,85 @@
 package jayslabs.kafka.section3;
 
 import java.time.Duration;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.TestPropertySource;
 
 import jayslabs.kafka.AbstractIntegrationTest;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Sinks;
+import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-//@ContextConfiguration(classes = KafkaProcessorTestConfiguration.class)
+/**
+ * Integration test for KafkaProcessor using industry best practices.
+ * Tests the complete producer → processor → consumer pipeline.
+ * Uses separate TestConfiguration with ConcurrentLinkedQueue for clean separation of concerns.
+ */
+@ContextConfiguration(classes = KafkaProcessorTestConfiguration.class)
 @TestPropertySource(properties = {
     "sec=section3",
     "spring.cloud.function.definition=testProducer;testConsumer;processor",
     "spring.cloud.stream.bindings.testProducer-out-0.destination=input-topic",
     "spring.cloud.stream.bindings.testConsumer-in-0.destination=output-topic"
-
 })
 public class KafkaProcessorTest extends AbstractIntegrationTest {
-    private static final Logger log = LoggerFactory.getLogger(KafkaProcessorTest.class);
-    
-    private static final Sinks.Many<String> reqSink = Sinks.many().unicast().onBackpressureBuffer();
-    private static final Sinks.Many<String> resSink = Sinks.many().unicast().onBackpressureBuffer();
+
+    @BeforeEach
+    void setUp() {
+        // Clear message queue for test isolation
+        KafkaProcessorTestConfiguration.OUTPUT_MESSAGES.clear();
+        KafkaProcessorTestConfiguration.reset();
+    }
 
     @Test
     public void testKafkaProcessor() {
-        
-        //produce some data using reqSink
-        reqSink.tryEmitNext("hworld1");
-        reqSink.tryEmitNext("hworld2");
+        // Arrange: Emit test messages to input stream
+        KafkaProcessorTestConfiguration.emitMessage("hworld1");
+        KafkaProcessorTestConfiguration.emitMessage("hworld2");
 
+        // Act & Assert: Wait for processor to transform messages and verify output
+        StepVerifier.create(
+            Mono.delay(Duration.ofSeconds(3)) // Allow time for message flow through pipeline
+                .then(Mono.fromCallable(() -> KafkaProcessorTestConfiguration.OUTPUT_MESSAGES.size()))
+        )
+        .expectNextMatches(messageCount -> {
+            // Verify we received the expected number of messages
+            Assertions.assertTrue(messageCount >= 2,
+                "Expected at least 2 processed messages, but got: " + messageCount + 
+                ". Messages in queue: " + KafkaProcessorTestConfiguration.OUTPUT_MESSAGES);
 
-        //consume the data using resSink
-        resSink.asFlux().take(2)
-        .timeout(Duration.ofSeconds(5))
-        .doOnNext(msg -> log.info("Test received: {}", msg))
-        .as(StepVerifier::create)
-        .consumeNextWith(m -> Assertions.assertEquals("HWORLD1", m))
-        .consumeNextWith(m -> Assertions.assertEquals("HWORLD2", m))
+            // Verify specific message transformation (lowercase → UPPERCASE)
+            String[] messages = KafkaProcessorTestConfiguration.OUTPUT_MESSAGES.toArray(new String[0]);
+            Assertions.assertEquals("HWORLD1", messages[0], "First message should be transformed to uppercase");
+            Assertions.assertEquals("HWORLD2", messages[1], "Second message should be transformed to uppercase");
+
+            return true;
+        })
         .verifyComplete();
     }
 
-    @TestConfiguration
-    static class KafkaProcessorTestConfiguration {
-        @Bean
-        public Supplier<Flux<String>> testProducer() {
-            return reqSink::asFlux;
-        }
+    @Test
+    public void testKafkaProcessorWithSingleMessage() {
+        // Arrange: Test with single message
+        KafkaProcessorTestConfiguration.emitMessage("test");
 
-        @Bean
-        public Consumer<Flux<String>> testConsumer() {
-            return flux -> flux
-                .doOnNext(resSink::tryEmitNext).subscribe();  // Write to resSink, not reqSink!
-        }
+        // Act & Assert: Verify single message processing
+        StepVerifier.create(
+            Mono.delay(Duration.ofSeconds(2))
+                .then(Mono.fromCallable(() -> KafkaProcessorTestConfiguration.OUTPUT_MESSAGES.size()))
+        )
+        .expectNextMatches(messageCount -> {
+            Assertions.assertTrue(messageCount >= 1,
+                "Expected at least 1 processed message, but got: " + messageCount +
+                ". Messages in queue: " + KafkaProcessorTestConfiguration.OUTPUT_MESSAGES);
+
+            String[] messages = KafkaProcessorTestConfiguration.OUTPUT_MESSAGES.toArray(new String[0]);
+            Assertions.assertEquals("TEST", messages[0], "Message should be transformed to uppercase");
+
+            return true;
+        })
+        .verifyComplete();
     }
 }
