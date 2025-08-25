@@ -1,16 +1,20 @@
 package jayslabs.kafka;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
+import org.springframework.test.annotation.DirtiesContext;
 
-@SpringBootTest
+@DirtiesContext
+@SpringBootTest(properties={
+    "logging.level.root=ERROR",
+    "logging.level.jayslabs.kafka*=INFO",
+    "spring.cloud.stream.kafka.binder.configuration.auto.offset.reset=earliest"
+})
 @EmbeddedKafka(
     partitions = 1, 
     bootstrapServersProperty = "spring.kafka.bootstrap-servers")
 public abstract class AbstractIntegrationTest {
 
-    @Autowired
-    private EmbeddedKafkaBroker broker;
+    // @Autowired
+    // private EmbeddedKafkaBroker broker;
 }

@@ -21,9 +21,7 @@ import reactor.test.StepVerifier;
 @TestPropertySource(properties = {
     "sec=section2",
     "spring.cloud.function.definition=consumer;testProducer",
-    "spring.cloud.stream.bindings.testProducer-out-0.destination=input-topic",
-    "logging.level.root=ERROR",
-    "logging.level.jayslabs.kafka*=INFO"
+    "spring.cloud.stream.bindings.testProducer-out-0.destination=input-topic"
 })
 @ContextConfiguration(classes = KafkaConsumerTestConfiguration.class)
 @ExtendWith(OutputCaptureExtension.class)

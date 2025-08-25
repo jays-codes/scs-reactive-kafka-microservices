@@ -20,9 +20,7 @@ import reactor.test.StepVerifier;
 @TestPropertySource(properties = {
     "sec=section2",
     "spring.cloud.function.definition=producer;testConsumer",
-    "spring.cloud.stream.bindings.testConsumer-in-0.destination=input-topic",
-    "logging.level.root=ERROR",
-    "logging.level.jayslabs.kafka*=INFO"
+    "spring.cloud.stream.bindings.testConsumer-in-0.destination=input-topic"
 })
 public class KafkaProducerTest extends AbstractIntegrationTest {
 
