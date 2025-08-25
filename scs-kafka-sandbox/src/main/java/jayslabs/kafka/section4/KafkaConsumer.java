@@ -38,7 +38,7 @@ public class KafkaConsumer {
     }
 
     private void printMsgDetails(Message<String> msg){
-        log.info("paylod: {}", msg.getPayload());
+        log.info("payload: {}", msg.getPayload());
         log.info("headers: {}", msg.getHeaders());
     }
 
