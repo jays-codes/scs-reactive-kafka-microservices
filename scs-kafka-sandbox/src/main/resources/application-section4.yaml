@@ -12,6 +12,7 @@ spring:
           destination: input-topic
         consumer-in-0:
           destination: input-topic
+          group: some-group
       kafka:
         binder:
           producer-properties:

@@ -1,7 +1,6 @@
 package jayslabs.kafka.section4;
 
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,8 +8,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.Message;
 
+import jayslabs.kafka.common.CustomRecord;
+import jayslabs.kafka.common.MessageConverter;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 @Configuration
 public class KafkaConsumer {
@@ -26,20 +26,23 @@ public class KafkaConsumer {
     @Bean
     public Consumer<Flux<Message<String>>> consumer() {
         return flux -> flux
+            .map(MessageConverter::toRecord)
             .doOnNext(this::printMsgDetails)
             .subscribe();
     }
 
-    @Bean
-    public Function<Flux<Message<String>>, Mono<Void>> function() {
-        return flux -> flux
-            .doOnNext(this::printMsgDetails)
-            .then();
-    }
+    // @Bean
+    // public Function<Flux<Message<String>>, Mono<Void>> function() {
+    //     return flux -> flux
+    //         .map(MessageConverter::toRecord)
+    //         .doOnNext(this::printMsgDetails)
+    //         .then();
+    // }
 
-    private void printMsgDetails(Message<String> msg){
-        log.info("payload: {}", msg.getPayload());
-        log.info("headers: {}", msg.getHeaders());
+    private void printMsgDetails(CustomRecord<String> rec){
+        log.info("payload: {}", rec.message());
+        log.info("key: {}", rec.key());
+        rec.acknowledgement().acknowledge();
     }
 
 }
