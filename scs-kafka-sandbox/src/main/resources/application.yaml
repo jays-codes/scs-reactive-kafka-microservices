@@ -1,4 +1,4 @@
-sec: section4
+sec: section2
 spring:
   profiles:
     active: ${sec}

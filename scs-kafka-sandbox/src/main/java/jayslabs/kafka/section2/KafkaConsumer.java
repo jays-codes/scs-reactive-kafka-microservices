@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.Message;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -23,7 +24,7 @@ public class KafkaConsumer {
     // }
 
     @Bean
-    public Consumer<Flux<String>> consumer() {
+    public Consumer<Flux<Message<String>>> consumer() {
         return flux -> flux
             .doOnNext(str -> log.info("Consumer Received message: {}", str))
             .subscribe();
