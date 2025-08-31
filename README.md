@@ -3,6 +3,7 @@ Jay's project/practice repo for Event-driven Microservices using Reactive Kafka 
 
 #### proj scs-kafka-sandbox (jayaslabs.kafka; SpringBoot 3.5.4, jdk 21; Clud Stream, Spring for Apache Kafka, Lombok, spring-cloud-stream-binder-kafka-reactive)
 
+- section5: created producer.OrderEventProducerConfig (@Configuration) with SCS Function orderEventProducer returning Supplier<Flux<Message<OrderEvent>>> (@Bean) (Reactive producer with MessageBuilder pattern), and toMessage() to convert int series in flux to Message<OrderEvent>
 - created section5 pkgs: consumer, producer, processor, dto. In section5.dto, created java records to represent messages consumed and produced by processor: dto.OrderEvent (with enum OrderType), dto.DigitalDelivery (DD), dto.PhysicalDelivery (PD). Processor consumes OrderEvent (OE) and produces DD or PD depending on OrderType
 - started section5 (new pkg) to demo Content Based Message rounting using StreamBridge.
 
