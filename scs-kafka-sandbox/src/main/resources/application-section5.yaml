@@ -1,0 +1,33 @@
+# Section 5: Content-Based Message Routing with StreamBridge
+spring:
+  application:
+    name: scs-kafka-sandbox
+  cloud:
+    function:
+      definition: orderEventProducer;orderProcessor;digitalDeliveryConsumer;physicalDeliveryConsumer
+    stream:
+      bindings:
+        # Producer binding
+        orderEventProducer-out-0:
+          destination: order-events-topic
+        
+        # Processor input binding  
+        orderProcessor-in-0:
+          destination: order-events-topic
+          group: order-processor-group
+          
+        # Consumer bindings (StreamBridge destinations)
+        digitalDeliveryConsumer-in-0:
+          destination: digital-delivery-topic
+          group: digital-delivery-group
+          
+        physicalDeliveryConsumer-in-0:
+          destination: physical-delivery-topic
+          group: physical-delivery-group
+
+# Application-specific channel configuration
+app:
+  delivery:
+    channels:
+      digital-delivery: digital-delivery-topic
+      physical-delivery: physical-delivery-topic
