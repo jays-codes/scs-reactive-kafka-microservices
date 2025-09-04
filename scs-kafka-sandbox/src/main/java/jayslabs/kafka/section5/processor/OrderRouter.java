@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.Message;
 
 import jayslabs.kafka.common.MessageConverter;
-import jayslabs.kafka.section5.config.DeliveryChannel;
+import jayslabs.kafka.section5.config.DeliveryChannelProperties;
 import jayslabs.kafka.section5.dto.DigitalDelivery;
 import jayslabs.kafka.section5.dto.OrderEvent;
 import jayslabs.kafka.section5.dto.PhysicalDelivery;
@@ -26,6 +26,8 @@ public class OrderRouter {
 
     @Autowired
     private StreamBridge streamBridge;
+    
+    // No need to inject properties anymore - using static constants
 
     @Bean
     public Function<Flux<Message<OrderEvent>>, Mono<Void>> orderProcessor(){
@@ -37,37 +39,35 @@ public class OrderRouter {
     }
 
     private void route(OrderEvent event){
-        // Use enum-based type-safe channel lookup and routing
-        DeliveryChannel channel = DeliveryChannel.findByOrderType(event.orderType());
-        
-        switch(channel){
-            case DIGITAL_DELIVERY -> {
+        // Simple, direct routing using configuration properties
+        switch(event.orderType()){
+            case DIGITAL -> {
                 var delivery = new DigitalDelivery(event.productId(), "%s@gmail.com".formatted(event.customerId()));
-                this.sendToChannel(delivery, channel);
+                this.sendToChannel(delivery, DeliveryChannelProperties.getDigital());
             }
-            case PHYSICAL_DELIVERY -> {
+            case PHYSICAL -> {
                 var delivery = new PhysicalDelivery(
                     event.productId(), 
                     "%s St".formatted(event.customerId()), 
                     "%s city".formatted(event.customerId()), 
                     "Canada");
-                this.sendToChannel(delivery, channel);
+                this.sendToChannel(delivery, DeliveryChannelProperties.getPhysical());
             }
         }
     }
 
     /**
-     * Generic method to send any delivery object to its corresponding channel.
+     * Generic method to send any delivery object via the explicit binding defined in yaml.
      * Provides consistent logging and error handling.
      */
-    private void sendToChannel(Object delivery, DeliveryChannel channel){
+    private void sendToChannel(Object delivery, String bindingName){
         try {
-            this.streamBridge.send(channel.getTopicName(), delivery);
+            this.streamBridge.send(bindingName, delivery);
             log.info("Successfully sent {} delivery to channel: {}", 
-                    delivery.getClass().getSimpleName(), channel.getTopicName());
+                    delivery.getClass().getSimpleName(), bindingName);
         } catch (Exception e) {
             log.error("Failed to send {} delivery to channel: {}", 
-                     delivery.getClass().getSimpleName(), channel.getTopicName(), e);
+                     delivery.getClass().getSimpleName(), bindingName, e);
             throw e;
         }
     }
