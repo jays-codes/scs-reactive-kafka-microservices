@@ -20,7 +20,7 @@ public class PhysicalDeliveryConsumer {
     private static final Logger log = LoggerFactory.getLogger(PhysicalDeliveryConsumer.class);
 
     @Bean
-    public Function<Flux<Message<PhysicalDelivery>>, Mono<Void>> physicalDeliveryConsumer(){
+    public Function<Flux<Message<PhysicalDelivery>>, Mono<Void>> physicalDlvryCnsmr(){
         return flux -> flux
             .map(MessageConverter::toRecord)
             .doOnNext(this::printMsgDetails)
@@ -30,7 +30,7 @@ public class PhysicalDeliveryConsumer {
 
     private void printMsgDetails(CustomRecord<PhysicalDelivery> rec){
         log.info("Physical Consumer: {}", rec.message());
-        log.info("key: {}", rec.key());
+        //log.info("key: {}", rec.key());
         rec.acknowledgement().acknowledge();
     }
 }

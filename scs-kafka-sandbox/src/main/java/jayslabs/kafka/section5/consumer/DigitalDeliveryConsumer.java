@@ -20,7 +20,7 @@ public class DigitalDeliveryConsumer {
     private static final Logger log = LoggerFactory.getLogger(DigitalDeliveryConsumer.class);
 
     @Bean
-    public Function<Flux<Message<DigitalDelivery>>, Mono<Void>> digitalDeliveryConsumer(){
+    public Function<Flux<Message<DigitalDelivery>>, Mono<Void>> digitalDlvryCnsmr(){
         return flux -> flux
             .map(MessageConverter::toRecord)
             .doOnNext(this::printMsgDetails)
@@ -30,7 +30,7 @@ public class DigitalDeliveryConsumer {
 
     private void printMsgDetails(CustomRecord<DigitalDelivery> rec){
         log.info("Digital Consumer: {}", rec.message());
-        log.info("key: {}", rec.key());
+        //log.info("key: {}", rec.key());
         rec.acknowledgement().acknowledge();
     }
 }

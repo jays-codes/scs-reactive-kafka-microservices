@@ -60,14 +60,14 @@ public class OrderRouter {
      * Generic method to send any delivery object via the explicit binding defined in yaml.
      * Provides consistent logging and error handling.
      */
-    private void sendToChannel(Object delivery, String bindingName){
+    private void sendToChannel(Object delivery, String topic){
         try {
-            this.streamBridge.send(bindingName, delivery);
+            this.streamBridge.send(topic, delivery);
             log.info("Successfully sent {} delivery to channel: {}", 
-                    delivery.getClass().getSimpleName(), bindingName);
+                    delivery.getClass().getSimpleName(), topic);
         } catch (Exception e) {
             log.error("Failed to send {} delivery to channel: {}", 
-                     delivery.getClass().getSimpleName(), bindingName, e);
+                     delivery.getClass().getSimpleName(), topic, e);
             throw e;
         }
     }
