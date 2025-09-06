@@ -43,8 +43,8 @@
 
 # Section 5: Content-Based Message Routing with StreamBridge
 spring:
-  application:
-    name: scs-kafka-sandbox
+  # application:
+  #   name: scs-kafka-sandbox
   cloud:
     function:
       definition: orderEventProducer;orderProcessor;digitalDlvryCnsmr;physicalDlvryCnsmr
