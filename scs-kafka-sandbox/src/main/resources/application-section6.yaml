@@ -18,10 +18,10 @@ spring:
           destination: order-events-topic
           group: order-processor-group
           
-        digital-delivery-out:
-          destination: digital-delivery-topic
-        physical-delivery-out:
-          destination: physical-delivery-topic
+        # digital-delivery-out:
+        #   destination: digital-delivery-topic
+        # physical-delivery-out:
+        #   destination: physical-delivery-topic
 
         # Consumer bindings (StreamBridge destinations)
         digitalDlvryCnsmr-in-0:

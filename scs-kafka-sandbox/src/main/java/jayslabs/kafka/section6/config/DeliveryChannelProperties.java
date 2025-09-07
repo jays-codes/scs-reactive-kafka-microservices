@@ -7,13 +7,13 @@ package jayslabs.kafka.section6.config;
  */
 public final class DeliveryChannelProperties {
     
-    // binding names (not topic names)
-    private static final String DIGITAL_BINDING = "digital-delivery-out";
-    private static final String PHYSICAL_BINDING = "physical-delivery-out";
+    // // binding names (not topic names)
+    // private static final String DIGITAL_BINDING = "digital-delivery-out";
+    // private static final String PHYSICAL_BINDING = "physical-delivery-out";
 
-        // // topic names (not binding names)
-        // private static final String DIGITAL_TOPIC = "digital-delivery-topic";
-        // private static final String PHYSICAL_TOPIC = "physical-delivery-topic";
+        // topic names (not binding names)
+        private static final String DIGITAL_TOPIC = "digital-delivery-topic";
+        private static final String PHYSICAL_TOPIC = "physical-delivery-topic";
 
     // Private constructor to prevent instantiation
     private DeliveryChannelProperties() {
@@ -22,11 +22,11 @@ public final class DeliveryChannelProperties {
 
     // Static getters for binding names
     public static String getDigital() {
-        return DIGITAL_BINDING;
+        return DIGITAL_TOPIC;
     }
     
     public static String getPhysical() {
-        return PHYSICAL_BINDING;
+        return PHYSICAL_TOPIC;
     }
     
     /**
@@ -35,8 +35,8 @@ public final class DeliveryChannelProperties {
      */
     public static String getBindingForOrderType(jayslabs.kafka.section5.dto.OrderType orderType) {
         return switch (orderType) {
-            case DIGITAL -> DIGITAL_BINDING;
-            case PHYSICAL -> PHYSICAL_BINDING;
+            case DIGITAL -> DIGITAL_TOPIC;
+            case PHYSICAL -> PHYSICAL_TOPIC;
         };
     }
 }
