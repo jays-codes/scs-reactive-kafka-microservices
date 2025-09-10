@@ -1,21 +1,21 @@
 package jayslabs.kafka.section7;
 
-import org.springframework.context.annotation.Configuration;
-
 import java.util.function.Function;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.stream.function.StreamBridge;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.integration.support.MessageBuilder;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.Message;
 
 import jayslabs.kafka.common.CustomRecord;
 import jayslabs.kafka.common.MessageConverter;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import org.springframework.cloud.stream.function.StreamBridge;
-import org.springframework.messaging.Message;
-import org.springframework.context.annotation.Bean;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.integration.support.MessageBuilder;
-import org.springframework.kafka.support.KafkaHeaders;
 
 @Configuration
 public class CharFinder {
@@ -28,7 +28,7 @@ public class CharFinder {
     private static final String DLT_CHARFINDER_TOPIC = "dlt-charfinder-topic";
 
     @Bean 
-    public Function<Flux<Message<String>>, Flux<Character>> processor(){
+    public Function<Flux<Message<String>>, Flux<Character>> charProcessor(){
         return flux -> flux
             .map(MessageConverter::toRecord)
             .concatMap(r -> this.find(r.message())
