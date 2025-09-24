@@ -1,0 +1,35 @@
+
+
+# Section 8: FanOut Content-Based Message Routing with StreamBridge
+spring:
+  # application:
+  #   name: scs-kafka-sandbox
+  cloud:
+    function:
+      definition: orderEventProducer;processor;digitalDlvryCnsmr;physicalDlvryCnsmr
+    stream:
+      bindings:
+        # Producer binding
+        orderEventProducer-out-0:
+          destination: order-events-topic
+        
+        # Processor input binding  
+        processor-in-0:
+          destination: order-events-topic
+          group: processor-group
+          
+        # Consumer bindings (StreamBridge destinations)
+        digitalDlvryCnsmr-in-0:
+          destination: digital-delivery-topic
+          group: digital-delivery-group
+          
+        physicalDlvryCnsmr-in-0:
+          destination: physical-delivery-topic
+          group: physical-delivery-group
+      kafka:
+        binder:
+          producer-properties:
+            "key.serializer": org.apache.kafka.common.serialization.StringSerializer
+          consumer-properties:
+            "key.deserializer": org.apache.kafka.common.serialization.StringDeserializer
+            "auto.offset.reset": "earliest"
