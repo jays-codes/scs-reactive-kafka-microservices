@@ -1,6 +1,6 @@
 
 
-# Section 8: FanOut Content-Based Message Routing with StreamBridge
+# Section 9: FanOut Content-Based Message Routing with Tuple
 spring:
   # application:
   #   name: scs-kafka-sandbox
@@ -17,7 +17,13 @@ spring:
         processor-in-0:
           destination: order-events-topic
           group: processor-group
-          
+        
+        # Processor output bindings
+        processor-out-0:
+          destination: digital-delivery-topic
+        processor-out-1:
+          destination: physical-delivery-topic
+
         # Consumer bindings (StreamBridge destinations)
         digitalDlvryCnsmr-in-0:
           destination: digital-delivery-topic
