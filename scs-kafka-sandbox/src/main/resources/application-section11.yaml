@@ -6,14 +6,20 @@ spring:
       definition:
         consumer
     stream:
+      # default:
+      #   producer:
+      #     useNativeEncoding: true
       bindings:
-        cmConsumer-in-0:
+        consumer-in-0:
           destination: input-topic
           group: some-group
-      # kafka:
-      #   binder:
-      #     consumer-properties:
-      #       "key.deserializer": org.apache.kafka.common.serialization.IntegerDeserializer
-      #       "value.deserializer": org.apache.kafka.common.serialization.IntegerDeserializer
-      #       "auto.offset.reset": "earliest"
-      #       "group.instance.id": "1"
+        # cmProducer-out-0:
+        #   cmProducer:
+        #     useNativeEncoding: true
+      kafka:
+        binder:
+          consumer-properties:
+            "value.deserializer": org.springframework.kafka.support.serializer.JsonDeserializer
+            "auto.offset.reset": "earliest"
+            "group.instance.id": "1"
+            "spring.json.trusted.packages": "jayslabs.kafka.section11.dto"
