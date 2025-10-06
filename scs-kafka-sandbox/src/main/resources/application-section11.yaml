@@ -6,9 +6,9 @@ spring:
       definition:
         consumer
     stream:
-      # default:
-      #   producer:
-      #     useNativeEncoding: true
+      default:
+        producer:
+          useNativeEncoding: true
       bindings:
         consumer-in-0:
           destination: input-topic

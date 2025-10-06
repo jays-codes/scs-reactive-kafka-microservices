@@ -19,7 +19,7 @@ import reactor.core.publisher.Flux;
     "sec=section11",
     "spring.cloud.function.definition=consumer;cmProducer",
     "spring.cloud.stream.bindings.cmProducer-out-0.destination=input-topic",
-    "spring.cloud.stream.bindings.cmProducer-out-0.producer.useNativeEncoding=true",
+    //"spring.cloud.stream.bindings.cmProducer-out-0.producer.useNativeEncoding=true",
     "spring.cloud.stream.kafka.bindings.cmProducer-out-0.producer.configuration.value.serializer=org.springframework.kafka.support.serializer.JsonSerializer"
     //"spring.profiles.active=section8",  // ✅ Explicitly set active profile
     // "spring.cloud.function.definition=consumer",
