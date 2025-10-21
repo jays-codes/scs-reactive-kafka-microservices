@@ -1,7 +1,50 @@
 # scs-reactive-kafka-microservices
 Jay's project/practice repo for Event-driven Microservices using Reactive Kafka and Spring Cloud Stream
 
-#### proj scs-kafka-sandbox (jayaslabs.kafka; SpringBoot 3.5.5, jdk 21; Cloud Stream, Spring for Apache Kafka, Lombok, spring-cloud-stream-binder-kafka-reactive)
+#### proj: saga-choreo (jayslabs.kafka; SpringBoot 3.5.6, jdk 21; Cloud Stream, Spring for Apache Kafka, Lombok, Spring Reactive Web, Spring Data R2DBC, H2, spring-cloud-stream-binder-kafka-reactive)
+
+##### Description
+Each service module configured with parent POM inheritance for consistent dependency management; Project demonstrates event-driven microservices architecture using choreography pattern where services react to events without central orchestrator; Architecture: services observe domain events (OrderCreated, PaymentDeducted, InventoryDeducted, ShippingScheduled) and react independently with parallel processing model; Each service maintains its own H2 database (R2DBC for reactive persistence) and publishes events via Kafka topics; Pattern enables distributed transaction management through compensating transactions (e.g., PaymentRefunded when inventory fails)
+
+##### Technology Stack:
+- Spring Cloud Stream (event-driven abstraction)
+- Reactive Kafka Binder (Kafka integration)
+- Spring WebFlux (reactive web layer)
+- Spring Data R2DBC (reactive database access)
+- H2 Database (embedded for development)
+- Lombok (boilerplate reduction)
+
+##### Architecture Pattern: Saga Choreography
+- Decentralized event-driven coordination
+- Services react to domain events without central orchestrator
+- Parallel processing model (services observe OrderCreated simultaneously)
+- Each service maintains independent database (database-per-service pattern)
+- Compensating transactions for rollback (e.g., PaymentRefunded on inventory failure)
+
+##### Module Responsibilities:
+- choreo-common: Shared DTOs, domain events, utilities
+- order-service: Order workflow coordination, order state management
+- customer-payment: Payment processing, refund compensation
+- inventory-service: Stock reservation, inventory restoration
+- shipping-service: Delivery scheduling
+
+##### Event Flow (Parallel Model):
+  OrderCreated event
+       │
+   ┌───┼───┬───────────┐
+   │   │   │           │
+   ▼   ▼   ▼           ▼
+Payment Inventory Shipping (all react in parallel)
+   │   │   │
+   └───┼───┴─────► Compensating events if failure
+
+Foundation for building production-grade event-driven microservices
+with saga pattern for distributed transaction management
+
+##### Changes
+- initialize saga-choreo multi-module Maven project for implementing Saga Pattern (Choreography); Created parent POM (saga-choreo) with Spring Boot 3.5.6, Spring Cloud Stream 2025.0.0, reactive Kafka binder, WebFlux, R2DBC with H2, and Lombok dependencies; with five modules: choreo-common (shared DTOs/events), order-service (order workflow coordinator), customer-payment (payment/refund processing), inventory-service (stock management), shipping-service (delivery scheduling); 
+
+#### proj: scs-kafka-sandbox (jayslabs.kafka; SpringBoot 3.5.5, jdk 21; Cloud Stream, Spring for Apache Kafka, Lombok, spring-cloud-stream-binder-kafka-reactive)
 
 - section12: demonstrate multi-topic consumer pattern for single consumer consuming from multiple Kafka topics using comma-separated destination list; Created KafkaConsumer.java with simple Consumer<Flux<String>> consuming from both input-topic1 and input-topic2 via single consumer-in-0 binding; Configured application-section12.yaml with destination: "input-topic1,input-topic2" showing Spring Cloud Stream's built-in multi-topic subscription capability; Created MultiTopicConsumerTest.java integration test with two Sinks.Many<String> (sink1, sink2) simulating producers for producer1 (→ input-topic1) and producer2 (→ input-topic2); Test validates single consumer receives messages from multiple topics in merged order; Key difference from Fan-In pattern (section10): Multi-topic assumes same message type across topics with automatic merge by framework, while Fan-In uses Tuple2<Flux<T1>, Flux<T2>> for different types with explicit Flux.combineLatest() control; Message flow: sink1 → input-topic1 → consumer (merged), sink2 → input-topic2 → consumer (merged); Alternative approach: ReceiverOptionsCustomizer with subscription(List<String> topics) for programmatic multi-topic configuration; Use cases: aggregating logs from multiple services, consuming events from regional topics, merging audit trails; Enterprise pattern for simplified multi-source consumption when topics share same schema and processing logic doesn't require per-topic awareness
 - section11: applied default scs (not kafka) properties in yaml, at scs level, for encoding/decoding, removing from binding level
