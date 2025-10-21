@@ -4,7 +4,9 @@ Jay's project/practice repo for Event-driven Microservices using Reactive Kafka 
 #### proj: saga-choreo (jayslabs.kafka; SpringBoot 3.5.6, jdk 21; Cloud Stream, Spring for Apache Kafka, Lombok, Spring Reactive Web, Spring Data R2DBC, H2, spring-cloud-stream-binder-kafka-reactive)
 
 ##### Description
-Each service module configured with parent POM inheritance for consistent dependency management; Project demonstrates event-driven microservices architecture using choreography pattern where services react to events without central orchestrator; Architecture: services observe domain events (OrderCreated, PaymentDeducted, InventoryDeducted, ShippingScheduled) and react independently with parallel processing model; Each service maintains its own H2 database (R2DBC for reactive persistence) and publishes events via Kafka topics; Pattern enables distributed transaction management through compensating transactions (e.g., PaymentRefunded when inventory fails)
+Each service module configured with parent POM inheritance for consistent dependency management; Project demonstrates event-driven microservices architecture using choreography pattern where services react to events without central orchestrator; Architecture: services observe domain events (OrderCreated, PaymentDeducted, InventoryDeducted, ShippingScheduled) and react independently with parallel processing model; Each service maintains its own H2 database (R2DBC for reactive persistence) and publishes events via Kafka topics; Pattern enables distributed transaction management through compensating transactions (e.g., PaymentRefunded when inventory fails); Foundation for building production-grade event-driven microservices
+with saga pattern for distributed transaction management
+
 
 ##### Technology Stack:
 - Spring Cloud Stream (event-driven abstraction)
@@ -27,19 +29,6 @@ Each service module configured with parent POM inheritance for consistent depend
 - customer-payment: Payment processing, refund compensation
 - inventory-service: Stock reservation, inventory restoration
 - shipping-service: Delivery scheduling
-
-##### Event Flow (Parallel Model):
-  OrderCreated event
-       │
-   ┌───┼───┬───────────┐
-   │   │   │           │
-   ▼   ▼   ▼           ▼
-Payment Inventory Shipping (all react in parallel)
-   │   │   │
-   └───┼───┴─────► Compensating events if failure
-
-Foundation for building production-grade event-driven microservices
-with saga pattern for distributed transaction management
 
 ##### Changes
 - initialize saga-choreo multi-module Maven project for implementing Saga Pattern (Choreography); Created parent POM (saga-choreo) with Spring Boot 3.5.6, Spring Cloud Stream 2025.0.0, reactive Kafka binder, WebFlux, R2DBC with H2, and Lombok dependencies; with five modules: choreo-common (shared DTOs/events), order-service (order workflow coordinator), customer-payment (payment/refund processing), inventory-service (stock management), shipping-service (delivery scheduling); 
