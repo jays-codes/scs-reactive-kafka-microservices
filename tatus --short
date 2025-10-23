@@ -1,0 +1,26 @@
+[1mdiff --git a/README.md b/README.md[m
+[1mindex 904a79c..11a3f69 100644[m
+[1m--- a/README.md[m
+[1m+++ b/README.md[m
+[36m@@ -31,6 +31,7 @@[m [mwith saga pattern for distributed transaction management[m
+ - shipping-service: Delivery scheduling[m
+ [m
+ ##### Changes[m
+[32m+[m[32m- <new entry here>[m
+ - refactor saga-choreo POM structure for cleaner dependency management; Removed duplicate dependencies from parent POM (saga-choreo/pom.xml), keeping only Lombok in parent <dependencies> section while service-specific dependencies (spring-boot-starter-data-r2dbc, webflux, spring-cloud-stream, spring-kafka, spring-cloud-stream-binder-kafka-reactive, H2, r2dbc-h2, test dependencies) remain inherited via dependencyManagement from spring-boot-starter-parent; Configured choreo-common/pom.xml with spring-cloud-stream-binder-kafka-reactive dependency using <scope>provided</scope> (avoiding unnecessary packaging in library module) and added spring-boot.repackage.skip=true property to prevent Spring Boot repackaging for shared library module; Fixed indentation inconsistencies in customer-payment/pom.xml <dependencies> section ensuring uniform 8-space indentation for all dependency blocks; Pattern demonstrates Maven best practice: parent POM defines only truly shared dependencies while child modules declare their specific needs, common library modules use provided scope for compile-time dependencies, and repackage skipping for non-executable modules[m
+ - initialize saga-choreo multi-module Maven project for implementing Saga Pattern (Choreography); Created parent POM (saga-choreo) with Spring Boot 3.5.6, Spring Cloud Stream 2025.0.0, reactive Kafka binder, WebFlux, R2DBC with H2, and Lombok dependencies; with five modules: choreo-common (shared DTOs/events), order-service (order workflow coordinator), customer-payment (payment/refund processing), inventory-service (stock management), shipping-service (delivery scheduling); [m
+ [m
+[1mdiff --git a/saga-choreo/choreo-common/src/main/java/jayslabs/kafka/Main.java b/saga-choreo/choreo-common/src/main/java/jayslabs/kafka/Main.java[m
+[1mdeleted file mode 100644[m
+[1mindex 7e211b5..0000000[m
+[1m--- a/saga-choreo/choreo-common/src/main/java/jayslabs/kafka/Main.java[m
+[1m+++ /dev/null[m
+[36m@@ -1,7 +0,0 @@[m
+[31m-package jayslabs.kafka;[m
+[31m-[m
+[31m-public class Main {[m
+[31m-    public static void main(String[] args) {[m
+[31m-        System.out.println("Hello world!");[m
+[31m-    }[m
+[31m-}[m
+\ No newline at end of file[m
