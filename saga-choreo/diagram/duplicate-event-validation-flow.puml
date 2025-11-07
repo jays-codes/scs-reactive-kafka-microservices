@@ -1,0 +1,129 @@
+@startuml Duplicate Event Validation Flow
+
+title Duplicate Event Validation - Two Scenarios
+
+actor "Kafka Consumer" as Consumer
+participant "InventoryEventHandler" as Handler
+participant "DuplicateEventValidator" as Validator
+participant "InventoryRepository" as Repo
+database "H2 Database" as DB
+participant "Mono Pipeline" as Pipeline
+
+== Scenario 1: New Event (Not Duplicate) ==
+
+Consumer -> Handler: PaymentDeducted event\n(orderId: 123)
+activate Handler
+
+Handler -> Handler: handlePaymentDeducted(event)
+note right: Extract orderId = 123
+
+Handler -> Repo: existsByOrderId(123)
+activate Repo
+Repo -> DB: SELECT COUNT(*) WHERE order_id = 123
+activate DB
+DB --> Repo: 0 rows (not found)
+deactivate DB
+Repo --> Handler: Mono<Boolean> emits **false**
+deactivate Repo
+
+Handler -> Repo: deductInventory(orderId, productId)
+note right: Define processing logic\n(not executed yet)
+
+Handler -> Validator: validate(isDuplicate, processEvent)
+activate Validator
+
+Validator -> Pipeline: evtValidationPub.transform(emitDuplicateError())
+activate Pipeline
+
+Pipeline -> Pipeline: flatMap(b -> b ? error : empty)
+note right: b = false\nReturns Mono.empty()
+
+Pipeline -> Pipeline: doOnError(...) 
+note right: No error, skipped
+
+Pipeline -> Pipeline: then()
+note right: Converts to Mono<Void>\nCompletes successfully
+
+Pipeline --> Validator: Mono<Void> completes
+deactivate Pipeline
+
+Validator -> Pipeline: .then(evtProcessingPub)
+activate Pipeline
+note right: Validation passed,\nexecute processing
+
+Pipeline -> Repo: deductInventory(orderId, productId)
+activate Repo
+Repo -> DB: UPDATE inventory SET qty = qty - 1\nINSERT INTO processed_events
+activate DB
+DB --> Repo: Success
+deactivate DB
+Repo --> Pipeline: Inventory object
+deactivate Repo
+
+Pipeline -> Pipeline: map to InventoryEvent.InventoryDeducted
+Pipeline --> Validator: Mono<InventoryEvent.InventoryDeducted>
+deactivate Pipeline
+
+Validator --> Handler: Mono<InventoryEvent.InventoryDeducted>
+deactivate Validator
+
+Handler --> Consumer: ✅ Event processed successfully
+deactivate Handler
+
+== Scenario 2: Duplicate Event ==
+
+Consumer -> Handler: PaymentDeducted event\n(orderId: 456, DUPLICATE)
+activate Handler
+
+Handler -> Handler: handlePaymentDeducted(event)
+note right: Extract orderId = 456
+
+Handler -> Repo: existsByOrderId(456)
+activate Repo
+Repo -> DB: SELECT COUNT(*) WHERE order_id = 456
+activate DB
+DB --> Repo: 1 row (already exists!)
+deactivate DB
+Repo --> Handler: Mono<Boolean> emits **true**
+deactivate Repo
+
+Handler -> Repo: deductInventory(orderId, productId)
+note right: Define processing logic\n(will NOT execute)
+
+Handler -> Validator: validate(isDuplicate, processEvent)
+activate Validator
+
+Validator -> Pipeline: evtValidationPub.transform(emitDuplicateError())
+activate Pipeline
+
+Pipeline -> Pipeline: flatMap(b -> b ? error : empty)
+note right: b = true\nReturns Mono.error(\nEventAlreadyProcessedException)
+
+Pipeline -> Pipeline: doOnError(EventAlreadyProcessedException, log.warn)
+note right: ⚠️ Log: "Duplicate event"
+
+Pipeline -> Pipeline: then()
+note right: Converts to Mono<Void>\nPropagates error
+
+Pipeline --> Validator: Mono<Void> emits error
+deactivate Pipeline
+
+Validator -> Validator: .then(evtProcessingPub)
+note right: ❌ NEVER EXECUTES\nShort-circuits on error
+
+Validator --> Handler: Mono.error(EventAlreadyProcessedException)
+deactivate Validator
+
+Handler --> Consumer: ❌ EventAlreadyProcessedException\n(Duplicate detected, skip processing)
+deactivate Handler
+
+note over Consumer, DB
+  **Key Points:**
+  • New Event: Validation passes → Processing executes → DB updated
+  • Duplicate: Validation fails → Processing skipped → Error returned
+  • Idempotency ensures each event processed exactly once
+  • Reactive pipeline composition with .transform() and .then()
+end note
+
+@enduml
+

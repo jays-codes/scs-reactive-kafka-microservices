@@ -31,7 +31,7 @@ with saga pattern for distributed transaction management
 - shipping-service: Delivery scheduling
 
 ##### Changes
-- [BP] added validator for Duplicate Events; pkgs common.util/exception; new classes: EventAlreadyProcessedException, DuplicateEventValidator
+- [BP] added validator for Duplicate Events; pkgs common.util/exception; new classes: EventAlreadyProcessedException, DuplicateEventValidator; added sequence diagrams - DuplicateEventValidationFlow.png 
 - created pkg common.publisher, and <<EventPublisher>>
 - Implement same as for OrderEventProcessor below and create InventoryEventProcessor, PaymentEventProcessor, ShippingEventProcessor to process their respective DomainEvents; added missinh InventoryStatus enum
 - [BP] implement type-safe event processor pattern with pattern matching for sealed interface event handling; Created two-layer interface hierarchy: EventProcessor<T extends DomainEvent, R extends DomainEvent> (generic abstraction with Mono<R> process(T) method), OrderEventProcessor<R extends DomainEvent> (specialized for OrderEvent input with generic output), implements default process() method using [BP] pattern matching switch (pms) routing to abstract handle() methods; pms handles all sealed OrderEvent types (OrderCreated, OrderCancelled, OrderCompleted) routing to strongly-typed handle() methods; overloaded handle() to provide template for handling diff OrderEvents: OrderEvent.OrderCreated/OrderCancelled/OrderCompleted forcing implementers to explicitly handle all event types; Created common.processor
