@@ -31,6 +31,7 @@ with saga pattern for distributed transaction management
 - shipping-service: Delivery scheduling
 
 ##### Changes
+- added in-code notes in comments to clarify reactive flow in duplicate validation
 - [BP] added validator for Duplicate Events; pkgs common.util/exception; new classes: EventAlreadyProcessedException, DuplicateEventValidator; added sequence diagrams - DuplicateEventValidationFlow.png 
 - created pkg common.publisher, and <<EventPublisher>>
 - Implement same as for OrderEventProcessor below and create InventoryEventProcessor, PaymentEventProcessor, ShippingEventProcessor to process their respective DomainEvents; added missinh InventoryStatus enum
