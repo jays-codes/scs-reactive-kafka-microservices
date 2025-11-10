@@ -31,6 +31,7 @@ with saga pattern for distributed transaction management
 - shipping-service: Delivery scheduling
 
 ##### Changes
+- customer-payment service implementation : Created package structure -> application layer (entity/repository/service/mapper), common layer (dto/exception/service), messaging layer (event handlers); Implemented entities: Customer (@Data, fields: id/name/balance) for customer account management, CustomerPayment (fields: paymentId/orderId/customerId/status/amount) for payment transaction audit trail; Created DTOs: PaymentDTO (@Builder record with paymentId/orderId/customerId/amount/status) for service-to-messaging communication, PaymentProcessRequestDTO (@Builder record with customerId/orderId/amount) for messaging-to-service requests; Implemented repositories: CustomerRepository extends ReactiveCrudRepository<Customer, Integer> for customer balance operations, PaymentRepository extends ReactiveCrudRepository<CustomerPayment, UUID> with custom existsByOrderId(UUID) query for idempotency checking; Architecture enforces immutability at boundaries (DTOs as records), confines mutable entities to service layer, decouples Kafka concerns from business logic; Added ARCHITECTURE_NOTES.md;
 - added CustomRecord (record) and MessageConverter to common.util
 - added in-code notes in comments to clarify reactive flow in duplicate validation
 - [BP] added validator for Duplicate Events; pkgs common.util/exception; new classes: EventAlreadyProcessedException, DuplicateEventValidator; added sequence diagrams - DuplicateEventValidationFlow.png 
