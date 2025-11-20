@@ -59,17 +59,6 @@ public class PaymentServiceImpl implements PaymentService{
         );
     }
 
-    @Override
-    @Transactional
-    public Mono<PaymentDTO> processRefund(UUID orderId) {
-
-        return this.pymtRepo.findByOrderIdAndStatus(orderId, PaymentStatus.DEDUCTED)
-            .zipWhen(custPymt -> this.custRepo.findById(custPymt.getCustomerId()))
-            .flatMap(tup -> this.refundPayment(tup.getT1(), tup.getT2()))
-            .doOnNext(pymtDTO -> log.info("Refunded amount of {} for orderId: {}", pymtDTO.amount(), pymtDTO.orderId())
-        );
-    }
-
     private Mono<PaymentDTO> deductPayment(Customer customer, PaymentProcessRequestDTO reqDTO) {
         var custPymt = EntityDTOMapper.toCustomerPayment(reqDTO); //[BP] for creating a pymt transaction
         customer.setBalance(customer.getBalance() - reqDTO.amount());
@@ -79,12 +68,49 @@ public class PaymentServiceImpl implements PaymentService{
         .map(EntityDTOMapper::toPaymentDTO);
     }
 
+    @Override
+    @Transactional
+    public Mono<PaymentDTO> processRefund(UUID orderId) {
+
+        /*
+        Searches for a payment that was previously deducted for this order
+        Only DEDUCTED payments can be refunded (business logic constraint)
+        If no payment found → Mono completes empty (no refund processed)
+        */
+        return this.pymtRepo.findByOrderIdAndStatus(orderId, PaymentStatus.DEDUCTED) //returns Mono<CustomerPayment>
+            /* 
+            Input: Mono<CustomerPayment> from Phase 1
+            Operation: For each CustomerPayment, fetch the corresponding Customer
+            Output: Mono<Tuple2<CustomerPayment, Customer>>
+
+            zipWhen preserves both the original CustomerPayment AND the fetched Customer as a tuple
+            This avoids nested reactive chains and keeps both entities accessible
+            */
+            .zipWhen(custPymt -> this.custRepo.findById(custPymt.getCustomerId())) //Mono<Tuple2<CustomerPayment, Customer>>
+            .flatMap(tup -> this.refundPayment(tup.getT1(), tup.getT2()))
+            .doOnNext(pymtDTO -> log.info("Refunded amount of {} for orderId: {}", pymtDTO.amount(), pymtDTO.orderId())
+        );
+    }
+
     private Mono<PaymentDTO> refundPayment(CustomerPayment custPymt, Customer cust){
         cust.setBalance(cust.getBalance() + custPymt.getAmount());
         custPymt.setStatus(PaymentStatus.REFUNDED);
-        return this.custRepo.save(cust)
-        .then(this.pymtRepo.save(custPymt))
-        .map(EntityDTOMapper::toPaymentDTO);
+        return this.custRepo.save(cust) //Mono<Customer>
+
+        /* 
+        Waits for the customer save to complete
+        Discards the Mono<Customer> result
+        Subscribes to pymtRepo.save(custPymt) only after customer is saved
+        Ensures sequential execution for database consistency
+        */
+        .then(this.pymtRepo.save(custPymt)) //Mono<CustomerPayment>
+
+        /**
+            Converts the saved CustomerPayment entity to PaymentDTO
+            .map(custPymt -> EntityDTOMapper.toPaymentDTO(custPymt))
+         */
+        .map(EntityDTOMapper::toPaymentDTO); //retuns Mono<R> where R is return type of 
+        //toPaymentDTO() (PaymentDTO)
     }
 
 }
@@ -155,4 +181,88 @@ OUTPUT: Mono<PaymentDTO>(
     status=DEDUCTED
 )
 
+*/
+
+/*
+Refund Payment Flow
+
+INPUT: processRefund(orderId = "abc-123")
+
+┌─────────────────────────────────────────────────────────────┐
+│ PHASE 1: FIND PAYMENT                                       │
+├─────────────────────────────────────────────────────────────┤
+│ pymtRepo.findByOrderIdAndStatus("abc-123", DEDUCTED)       │
+│ → SQL: SELECT * FROM customer_payment                       │
+│        WHERE order_id = 'abc-123' AND status = 'DEDUCTED'   │
+│ → Found: CustomerPayment(                                   │
+│     paymentId=xyz-789,                                      │
+│     orderId=abc-123,                                        │
+│     customerId=5,                                           │
+│     amount=100,                                             │
+│     status=DEDUCTED                                         │
+│   )                                                         │
+└─────────────────────────────────────────────────────────────┘
+        ↓
+┌─────────────────────────────────────────────────────────────┐
+│ PHASE 2: ZIP WITH CUSTOMER (zipWhen)                        │
+├─────────────────────────────────────────────────────────────┤
+│ custRepo.findById(5)                                        │
+│ → SQL: SELECT * FROM customer WHERE id = 5                  │
+│ → Found: Customer(id=5, name="John", balance=200)           │
+│                                                             │
+│ Result: Tuple2(                                             │
+│   T1 = CustomerPayment(...),                                │
+│   T2 = Customer(...)                                        │
+│ )                                                           │
+└─────────────────────────────────────────────────────────────┘
+        ↓
+┌─────────────────────────────────────────────────────────────┐
+│ PHASE 3: REFUND PAYMENT (flatMap → refundPayment)           │
+├─────────────────────────────────────────────────────────────┤
+│ refundPayment(CustomerPayment, Customer)                    │
+│                                                             │
+│ Step 3.1: Update in-memory state                            │
+│   cust.balance = 200 + 100 = 300 (in-memory)                │
+│   custPymt.status = REFUNDED (in-memory)                    │
+│                                                             │
+│ Step 3.2: Save customer                                     │
+│   custRepo.save(cust)                                       │
+│   → UPDATE customer SET balance=300 WHERE id=5              │
+│   → Emits: Mono<Customer>                                   │
+│                                                             │
+│ Step 3.3: .then() - Sequential chaining                     │
+│   Wait for customer save completion                         │
+│   Discard Mono<Customer> result                             │
+│                                                             │
+│ Step 3.4: Save payment                                      │
+│   pymtRepo.save(custPymt)                                   │
+│   → UPDATE customer_payment                                 │
+│      SET status='REFUNDED'                                  │
+│      WHERE payment_id='xyz-789'                             │
+│   → Emits: Mono<CustomerPayment>                            │
+│                                                             │
+│ Step 3.5: Transform to DTO                                  │
+│   .map(EntityDTOMapper::toPaymentDTO)                       │
+│   → PaymentDTO(                                             │
+│       paymentId=xyz-789,                                    │
+│       orderId=abc-123,                                      │
+│       customerId=5,                                         │
+│       amount=100,                                           │
+│       status=REFUNDED                                       │
+│     )                                                       │
+└─────────────────────────────────────────────────────────────┘
+        ↓
+┌─────────────────────────────────────────────────────────────┐
+│ PHASE 4: LOGGING (doOnNext)                                 │
+├─────────────────────────────────────────────────────────────┤
+│ log.info("Refunded amount of 100 for orderId: abc-123")     │
+└─────────────────────────────────────────────────────────────┘
+        ↓
+OUTPUT: Mono<PaymentDTO>(
+    paymentId=xyz-789,
+    orderId=abc-123,
+    customerId=5,
+    amount=100,
+    status=REFUNDED
+)
 */
