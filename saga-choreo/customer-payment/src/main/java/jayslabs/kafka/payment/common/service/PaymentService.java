@@ -10,5 +10,5 @@ public interface PaymentService {
 
     Mono<PaymentDTO> processPayment(PaymentProcessRequestDTO request);
 
-    Mono<PaymentDTO> refundPayment(UUID orderId);
+    Mono<PaymentDTO> processRefund(UUID orderId);
 }

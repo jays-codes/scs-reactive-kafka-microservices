@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import jayslabs.kafka.common.events.payment.PaymentStatus;
 import jayslabs.kafka.common.util.DuplicateEventValidator;
 import jayslabs.kafka.payment.application.entity.Customer;
+import jayslabs.kafka.payment.application.entity.CustomerPayment;
 import jayslabs.kafka.payment.application.mapper.EntityDTOMapper;
 import jayslabs.kafka.payment.application.repository.CustomerRepository;
 import jayslabs.kafka.payment.application.repository.PaymentRepository;
@@ -59,8 +60,14 @@ public class PaymentServiceImpl implements PaymentService{
     }
 
     @Override
-    public Mono<PaymentDTO> refundPayment(UUID orderId) {
-        return null;
+    @Transactional
+    public Mono<PaymentDTO> processRefund(UUID orderId) {
+
+        return this.pymtRepo.findByOrderIdAndStatus(orderId, PaymentStatus.DEDUCTED)
+            .zipWhen(custPymt -> this.custRepo.findById(custPymt.getCustomerId()))
+            .flatMap(tup -> this.refundPayment(tup.getT1(), tup.getT2()))
+            .doOnNext(pymtDTO -> log.info("Refunded amount of {} for orderId: {}", pymtDTO.amount(), pymtDTO.orderId())
+        );
     }
 
     private Mono<PaymentDTO> deductPayment(Customer customer, PaymentProcessRequestDTO reqDTO) {
@@ -72,9 +79,19 @@ public class PaymentServiceImpl implements PaymentService{
         .map(EntityDTOMapper::toPaymentDTO);
     }
 
+    private Mono<PaymentDTO> refundPayment(CustomerPayment custPymt, Customer cust){
+        cust.setBalance(cust.getBalance() + custPymt.getAmount());
+        custPymt.setStatus(PaymentStatus.REFUNDED);
+        return this.custRepo.save(cust)
+        .then(this.pymtRepo.save(custPymt))
+        .map(EntityDTOMapper::toPaymentDTO);
+    }
+
 }
 
 /*
+Process Payment Flow
+
 INPUT: PaymentProcessRequestDTO(customerId=1, orderId=abc-123, amount=50)
 ↓
 ┌─────────────────────────────────────────────────────────────┐
