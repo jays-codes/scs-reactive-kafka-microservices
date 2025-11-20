@@ -5,7 +5,7 @@ import java.util.UUID;
 import lombok.Builder;
 
 @Builder
-public record PaymentProcessRequestDTO(
+public record PaymentProcessRequest(
     Integer customerId, 
     UUID orderId, 
     Integer amount) {

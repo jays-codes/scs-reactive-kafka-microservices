@@ -12,6 +12,12 @@ import reactor.core.publisher.Mono;
 public interface OrderEventProcessor<R extends DomainEvent> 
     extends EventProcessor<OrderEvent, R>{
 
+    /*
+    Sealed interface exhaustiveness: Java compiler ensures all OrderEvent types are handled
+    Type-safe routing: Each case extracts the concrete event type
+    Strategy pattern: Routes to appropriate handle() method overload
+    No instanceof checks: Pattern matching provides clean, type-safe dispatch
+    */
     @Override
     default Mono<R> process(OrderEvent event){
         return switch(event){

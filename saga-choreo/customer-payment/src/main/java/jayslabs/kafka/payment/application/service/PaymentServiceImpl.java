@@ -15,7 +15,7 @@ import jayslabs.kafka.payment.application.mapper.EntityDTOMapper;
 import jayslabs.kafka.payment.application.repository.CustomerRepository;
 import jayslabs.kafka.payment.application.repository.PaymentRepository;
 import jayslabs.kafka.payment.common.dto.PaymentDTO;
-import jayslabs.kafka.payment.common.dto.PaymentProcessRequestDTO;
+import jayslabs.kafka.payment.common.dto.PaymentProcessRequest;
 import jayslabs.kafka.payment.common.exception.CustomerNotFoundException;
 import jayslabs.kafka.payment.common.exception.InsufficientBalanceException;
 import jayslabs.kafka.payment.common.service.PaymentService;
@@ -36,7 +36,7 @@ public class PaymentServiceImpl implements PaymentService{
 
     @Override
     @Transactional
-    public Mono<PaymentDTO> processPayment(PaymentProcessRequestDTO reqDTO) {
+    public Mono<PaymentDTO> processPayment(PaymentProcessRequest reqDTO) {
         return DuplicateEventValidator.validate(
             //[validation publisher : Mono<Boolean>] db call to check if orderId already exists. 
             //true = duplicate event, false = new event
@@ -59,7 +59,7 @@ public class PaymentServiceImpl implements PaymentService{
         );
     }
 
-    private Mono<PaymentDTO> deductPayment(Customer customer, PaymentProcessRequestDTO reqDTO) {
+    private Mono<PaymentDTO> deductPayment(Customer customer, PaymentProcessRequest reqDTO) {
         var custPymt = EntityDTOMapper.toCustomerPayment(reqDTO); //[BP] for creating a pymt transaction
         customer.setBalance(customer.getBalance() - reqDTO.amount());
         custPymt.setStatus(PaymentStatus.DEDUCTED);

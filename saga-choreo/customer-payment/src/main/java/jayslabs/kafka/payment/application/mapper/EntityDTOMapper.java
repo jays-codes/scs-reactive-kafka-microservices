@@ -2,10 +2,10 @@ package jayslabs.kafka.payment.application.mapper;
 
 import jayslabs.kafka.payment.application.entity.CustomerPayment;
 import jayslabs.kafka.payment.common.dto.PaymentDTO;
-import jayslabs.kafka.payment.common.dto.PaymentProcessRequestDTO;
+import jayslabs.kafka.payment.common.dto.PaymentProcessRequest;
 
 public class EntityDTOMapper {
-    public static CustomerPayment toCustomerPayment(PaymentProcessRequestDTO request){
+    public static CustomerPayment toCustomerPayment(PaymentProcessRequest request){
         return CustomerPayment.builder()
         .customerId(request.customerId())
         .orderId(request.orderId())
