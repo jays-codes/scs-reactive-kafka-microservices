@@ -73,14 +73,15 @@ public class OrderEventProcessorImpl implements OrderEventProcessor<PaymentEvent
 
     @Override
     public Mono<PaymentEvent> handle(OrderEvent.OrderCancelled event) {
-        // TODO Auto-generated method stub
-        return null;
+        return this.service.processRefund(event.orderId())
+        .map(EventDTOMapper::toPaymentRefundedEvent)
+        .doOnNext(evt -> log.info("payment refunded {}", evt))
+        .doOnError(ex -> log.error("error refunding payment", ex));
     }
 
     @Override
     public Mono<PaymentEvent> handle(OrderEvent.OrderCompleted event) {
-        // TODO Auto-generated method stub
-        return null;
+        return Mono.empty();
     }
 
     private UnaryOperator<Mono<PaymentEvent>> exceptionHandler(OrderEvent.OrderCreated evt){

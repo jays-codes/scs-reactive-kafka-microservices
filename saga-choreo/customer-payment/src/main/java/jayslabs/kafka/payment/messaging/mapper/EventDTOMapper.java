@@ -27,6 +27,16 @@ public class EventDTOMapper {
         .createdAt(Instant.now())
         .build();
     }
+    public static PaymentEvent toPaymentRefundedEvent(PaymentDTO pymtDTO){
+        return PaymentEvent.PaymentRefunded.builder()
+        .orderId(pymtDTO.orderId())
+        .paymentId(pymtDTO.paymentId())
+        .customerId(pymtDTO.customerId())
+        .amount(pymtDTO.amount())
+        .createdAt(Instant.now())
+        .build();
+    }
+
 
     public static Function<Throwable, Mono<PaymentEvent>> toPaymentFailedEvent(OrderEvent.OrderCreated evt){
         return ex -> Mono.fromSupplier(() -> PaymentEvent.PaymentFailed.builder()
