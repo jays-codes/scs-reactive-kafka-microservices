@@ -1,0 +1,327 @@
+@startuml Payment Exception Handling Flow
+
+title Payment Service - Exception Handling with Saga Choreography
+
+actor "Kafka Consumer" as Consumer
+participant "OrderEventProcessorImpl" as Processor
+participant "EventDTOMapper" as Mapper
+participant "PaymentService" as Service
+participant "DuplicateEventValidator" as Validator
+participant "PaymentRepository" as PaymentRepo
+participant "CustomerRepository" as CustomerRepo
+database "H2 Database" as DB
+participant "Kafka Producer" as Producer
+
+== Scenario 1: Successful Payment (Happy Path) ==
+
+Consumer -> Processor: OrderCreated event\n(orderId: abc-123, customerId: 1, amount: 50)
+activate Processor
+
+Processor -> Processor: handle(OrderEvent.OrderCreated)
+note right: Pattern matching routes\nto handle() method
+
+Processor -> Mapper: toPaymentProcessRequest(event)
+activate Mapper
+Mapper --> Processor: PaymentProcessRequest\n(orderId: abc-123, customerId: 1, amount: 50)
+deactivate Mapper
+
+Processor -> Service: processPayment(request)
+activate Service
+
+Service -> Validator: validate(isDuplicate, processingPub)
+activate Validator
+
+Validator -> PaymentRepo: existsByOrderId(abc-123)
+activate PaymentRepo
+PaymentRepo -> DB: SELECT EXISTS(...) WHERE order_id = 'abc-123'
+activate DB
+DB --> PaymentRepo: false (not duplicate)
+deactivate DB
+PaymentRepo --> Validator: Mono<Boolean> emits **false**
+deactivate PaymentRepo
+
+Validator -> Validator: emitDuplicateError()
+note right: false → Mono.empty()\nValidation passes ✓
+
+Validator -> CustomerRepo: findById(1)
+activate CustomerRepo
+CustomerRepo -> DB: SELECT * FROM customer WHERE id = 1
+activate DB
+DB --> CustomerRepo: Customer(balance: 100)
+deactivate DB
+CustomerRepo --> Validator: Mono<Customer>
+deactivate CustomerRepo
+
+Validator -> Validator: filter(balance >= 50)
+note right: 100 >= 50 → true ✓
+
+Validator -> Service: deductPayment(customer, request)
+Service -> CustomerRepo: save(customer with balance: 50)
+activate CustomerRepo
+CustomerRepo -> DB: UPDATE customer SET balance = 50
+activate DB
+DB --> CustomerRepo: Success
+deactivate DB
+deactivate CustomerRepo
+
+Service -> PaymentRepo: save(payment)
+activate PaymentRepo
+PaymentRepo -> DB: INSERT INTO customer_payment\n(status: DEDUCTED)
+activate DB
+DB --> PaymentRepo: Success (paymentId: xyz-789)
+deactivate DB
+PaymentRepo --> Service: CustomerPayment
+deactivate PaymentRepo
+
+Service --> Validator: PaymentDTO\n(paymentId: xyz-789, status: DEDUCTED)
+deactivate Validator
+Service --> Processor: Mono<PaymentDTO>
+deactivate Service
+
+Processor -> Mapper: toPaymentDeductedEvent(paymentDTO)
+activate Mapper
+Mapper --> Processor: PaymentEvent.PaymentDeducted\n(orderId: abc-123, paymentId: xyz-789)
+deactivate Mapper
+
+Processor -> Processor: doOnNext(log.info)
+note right: Log: "payment processed"
+
+Processor -> Processor: transform(exceptionHandler)
+note right: No errors, passes through ✓
+
+Processor -> Producer: Publish PaymentEvent.PaymentDeducted
+activate Producer
+Producer --> Consumer: ✅ Event published to payment-events-topic
+deactivate Producer
+
+deactivate Processor
+
+note over Consumer, Producer
+  **Result:** Payment successful
+  • PaymentDeducted event triggers Inventory Service
+  • Saga continues to next step
+end note
+
+== Scenario 2: Customer Not Found (Business Exception) ==
+
+Consumer -> Processor: OrderCreated event\n(orderId: def-456, customerId: 999, amount: 50)
+activate Processor
+
+Processor -> Processor: handle(OrderEvent.OrderCreated)
+
+Processor -> Mapper: toPaymentProcessRequest(event)
+activate Mapper
+Mapper --> Processor: PaymentProcessRequest\n(customerId: 999)
+deactivate Mapper
+
+Processor -> Service: processPayment(request)
+activate Service
+
+Service -> Validator: validate(isDuplicate, processingPub)
+activate Validator
+
+Validator -> PaymentRepo: existsByOrderId(def-456)
+activate PaymentRepo
+PaymentRepo -> DB: SELECT EXISTS(...)
+activate DB
+DB --> PaymentRepo: false
+deactivate DB
+PaymentRepo --> Validator: false (not duplicate)
+deactivate PaymentRepo
+
+Validator -> CustomerRepo: findById(999)
+activate CustomerRepo
+CustomerRepo -> DB: SELECT * FROM customer WHERE id = 999
+activate DB
+DB --> CustomerRepo: Empty result (not found)
+deactivate DB
+CustomerRepo --> Validator: Mono.empty()
+deactivate CustomerRepo
+
+Validator -> Validator: switchIfEmpty(CUSTOMER_NOT_FOUND)
+note right: ❌ Emits Mono.error(\nCustomerNotFoundException)
+
+Validator --> Service: Mono.error(CustomerNotFoundException)
+deactivate Validator
+
+Service --> Processor: ❌ Mono.error(CustomerNotFoundException)
+deactivate Service
+
+note right of Processor
+  **Error propagates through pipeline**
+  • .map() SKIPPED
+  • .doOnNext() SKIPPED
+  • .transform(exceptionHandler) EXECUTES
+end note
+
+Processor -> Processor: transform(exceptionHandler(event))
+activate Processor #LightCoral
+
+Processor -> Processor: Tier 1: onErrorResume(\nEventAlreadyProcessedException)
+note right: No match (not duplicate)
+
+Processor -> Processor: Tier 3: onErrorResume(\ntoPaymentFailedEvent(evt))
+note right: ✓ CATCHES CustomerNotFoundException
+
+Processor -> Mapper: toPaymentFailedEvent(evt).apply(ex)
+activate Mapper
+Mapper -> Mapper: Mono.fromSupplier(() -> \nPaymentEvent.PaymentFailed.builder()...)
+note right: Creates failure event with:\n• orderId: def-456\n• customerId: 999\n• amount: 50\n• message: "Customer not found"\n• createdAt: now()
+
+Mapper --> Processor: Mono<PaymentEvent.PaymentFailed>
+deactivate Mapper
+
+deactivate Processor
+
+Processor -> Producer: Publish PaymentEvent.PaymentFailed
+activate Producer
+Producer --> Consumer: ✅ PaymentFailed event published
+deactivate Producer
+
+deactivate Processor
+
+note over Consumer, Producer
+  **Result:** Error recovered gracefully
+  • PaymentFailed event triggers Order Service
+  • Order marked as FAILED
+  • Saga terminates (no compensating transactions needed)
+end note
+
+== Scenario 3: Insufficient Balance (Business Exception) ==
+
+Consumer -> Processor: OrderCreated event\n(orderId: ghi-789, customerId: 1, amount: 500)
+activate Processor
+
+Processor -> Processor: handle(OrderEvent.OrderCreated)
+
+Processor -> Mapper: toPaymentProcessRequest(event)
+activate Mapper
+Mapper --> Processor: PaymentProcessRequest\n(customerId: 1, amount: 500)
+deactivate Mapper
+
+Processor -> Service: processPayment(request)
+activate Service
+
+Service -> Validator: validate(isDuplicate, processingPub)
+activate Validator
+
+Validator -> PaymentRepo: existsByOrderId(ghi-789)
+activate PaymentRepo
+PaymentRepo --> Validator: false (not duplicate)
+deactivate PaymentRepo
+
+Validator -> CustomerRepo: findById(1)
+activate CustomerRepo
+CustomerRepo -> DB: SELECT * FROM customer WHERE id = 1
+activate DB
+DB --> CustomerRepo: Customer(balance: 100)
+deactivate DB
+CustomerRepo --> Validator: Mono<Customer>
+deactivate CustomerRepo
+
+Validator -> Validator: filter(balance >= amount)
+note right: 100 >= 500 → false ❌
+
+Validator -> Validator: switchIfEmpty(INSUFFICIENT_BALANCE)
+note right: ❌ Emits Mono.error(\nInsufficientBalanceException)
+
+Validator --> Service: Mono.error(InsufficientBalanceException)
+deactivate Validator
+
+Service --> Processor: ❌ Mono.error(InsufficientBalanceException)
+deactivate Service
+
+Processor -> Processor: transform(exceptionHandler(event))
+activate Processor #LightCoral
+
+Processor -> Processor: Tier 1: No match
+
+Processor -> Processor: Tier 3: Catches InsufficientBalanceException
+
+Processor -> Mapper: toPaymentFailedEvent(evt).apply(ex)
+activate Mapper
+Mapper --> Processor: PaymentEvent.PaymentFailed\n(message: "Customer does not have sufficient balance")
+deactivate Mapper
+
+deactivate Processor
+
+Processor -> Producer: Publish PaymentEvent.PaymentFailed
+activate Producer
+Producer --> Consumer: ✅ PaymentFailed event published
+deactivate Producer
+
+deactivate Processor
+
+note over Consumer, Producer
+  **Result:** Business rule violation handled
+  • PaymentFailed event published
+  • Order Service marks order as FAILED
+  • Customer notified of insufficient funds
+end note
+
+== Scenario 4: Duplicate Event (Idempotency) ==
+
+Consumer -> Processor: OrderCreated event\n(orderId: abc-123, DUPLICATE)
+activate Processor
+
+Processor -> Processor: handle(OrderEvent.OrderCreated)
+
+Processor -> Mapper: toPaymentProcessRequest(event)
+activate Mapper
+Mapper --> Processor: PaymentProcessRequest\n(orderId: abc-123)
+deactivate Mapper
+
+Processor -> Service: processPayment(request)
+activate Service
+
+Service -> Validator: validate(isDuplicate, processingPub)
+activate Validator
+
+Validator -> PaymentRepo: existsByOrderId(abc-123)
+activate PaymentRepo
+PaymentRepo -> DB: SELECT EXISTS(...) WHERE order_id = 'abc-123'
+activate DB
+DB --> PaymentRepo: true (already exists!)
+deactivate DB
+PaymentRepo --> Validator: Mono<Boolean> emits **true**
+deactivate PaymentRepo
+
+Validator -> Validator: emitDuplicateError()
+note right: true → Mono.error(\nEventAlreadyProcessedException)
+
+Validator -> Validator: doOnError(log.warn)
+note right: ⚠️ Log: "Duplicate event"
+
+Validator -> Validator: then()
+note right: Propagates error as Mono<Void>
+
+Validator -> Validator: .then(processingPub)
+note right: ❌ NEVER EXECUTES\nShort-circuits on error
+
+Validator --> Service: Mono.error(EventAlreadyProcessedException)
+deactivate Validator
+
+Service --> Processor: ❌ Mono.error(EventAlreadyProcessedException)
+deactivate Service
+
+Processor -> Processor: transform(exceptionHandler(event))
+activate Processor #LightYellow
+
+Processor -> Processor: Tier 1: onErrorResume(\nEventAlreadyProcessedException, e -> Mono.empty())
+note right: ✓ MATCHES!\nReturns Mono.empty()
+
+deactivate Processor
+
+Processor --> Consumer: Mono.empty() (completes without value)
+deactivate Processor
+
+note over Consumer, Producer
+  **Result:** Duplicate silently swallowed
+  • No PaymentDeducted event (already processed)
+  • No PaymentFailed event (not a failure)
+  • Kafka message acknowledged
+  • Idempotency protection successful ✓
+end note
+
+@enduml
+

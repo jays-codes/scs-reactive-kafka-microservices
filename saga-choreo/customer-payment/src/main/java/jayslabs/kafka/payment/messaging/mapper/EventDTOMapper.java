@@ -1,11 +1,13 @@
 package jayslabs.kafka.payment.messaging.mapper;
 
 import java.time.Instant;
+import java.util.function.Function;
 
 import jayslabs.kafka.common.events.order.OrderEvent;
 import jayslabs.kafka.common.events.payment.PaymentEvent;
 import jayslabs.kafka.payment.common.dto.PaymentDTO;
 import jayslabs.kafka.payment.common.dto.PaymentProcessRequest;
+import reactor.core.publisher.Mono;
 
 public class EventDTOMapper {
     public static PaymentProcessRequest toPaymentProcessRequest(OrderEvent.OrderCreated evt){
@@ -24,5 +26,15 @@ public class EventDTOMapper {
         .amount(pymtDTO.amount())
         .createdAt(Instant.now())
         .build();
+    }
+
+    public static Function<Throwable, Mono<PaymentEvent>> toPaymentFailedEvent(OrderEvent.OrderCreated evt){
+        return ex -> Mono.fromSupplier(() -> PaymentEvent.PaymentFailed.builder()
+            .orderId(evt.orderId())
+            .amount(evt.totalAmount())
+            .customerId(evt.customerId())
+            .createdAt(Instant.now())
+            .message(ex.getMessage())
+            .build());
     }
 }
