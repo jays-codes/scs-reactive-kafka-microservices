@@ -1,0 +1,265 @@
+@startuml OrderEventProcessorConfig Sequence Diagram - Part 1
+
+title OrderEventProcessorConfig - Reactive Processing Flow (Part 1: Happy Path & Error Recovery)
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 200
+
+' ==========================================
+' PARTICIPANTS
+' ==========================================
+
+box "Kafka Infrastructure" #LightGray
+    participant "Kafka Topic\n(order-events)" as KafkaTopic
+    participant "Spring Cloud\nStream" as SCS
+end box
+
+box "Messaging Layer" #LightGreen
+    participant "OrderEventProcessorConfig" as Config
+    participant "MessageConverter" as Converter
+    participant "OrderEventProcessorImpl" as Processor
+    participant "EventDTOMapper" as Mapper
+end box
+
+box "Service Layer" #LightBlue
+    participant "PaymentServiceImpl" as Service
+end box
+
+box "Data Layer" #LightCoral
+    participant "PaymentRepository" as PymtRepo
+    participant "CustomerRepository" as CustRepo
+end box
+
+box "Kafka Infrastructure" #LightGray
+    participant "Kafka Topic\n(payment-events)" as PaymentTopic
+end box
+
+' ==========================================
+' SCENARIO 1: SUCCESSFUL PAYMENT (OrderCreated)
+' ==========================================
+
+== Scenario 1: Successful Payment Processing ==
+
+KafkaTopic -> SCS : Message<OrderEvent.OrderCreated>\n(orderId=abc-123, customerId=1, amount=50)
+activate SCS
+
+SCS -> Config : Flux<Message<OrderEvent>>
+activate Config
+
+note over Config
+  **processor() Bean**
+  Function<Flux<Message<OrderEvent>>,
+           Flux<Message<PaymentEvent>>>
+end note
+
+Config -> Converter : MessageConverter.toRecord(message)
+activate Converter
+
+note right of Converter
+  Extract from Message<T>:
+  • key (KafkaHeaders.RECEIVED_KEY)
+  • payload (OrderEvent)
+  • acknowledgement (ReceiverOffset)
+end note
+
+Converter --> Config : CustomRecord<OrderEvent>\n(key="abc-123", message=OrderCreated, ack=ReceiverOffset)
+deactivate Converter
+
+Config -> Config : doOnNext(log.info("customer payment received..."))
+
+Config -> Processor : evtProcessor.process(OrderEvent.OrderCreated)
+activate Processor
+
+note over Processor
+  **Pattern Matching Router**
+  switch(event) {
+    case OrderCreated e -> handle(e)
+    case OrderCancelled e -> handle(e)
+    case OrderCompleted e -> handle(e)
+  }
+end note
+
+Processor -> Mapper : toPaymentProcessRequest(OrderCreated)
+activate Mapper
+Mapper --> Processor : PaymentProcessRequest\n(customerId=1, orderId=abc-123, amount=50)
+deactivate Mapper
+
+Processor -> Service : processPayment(PaymentProcessRequest)
+activate Service
+
+note over Service
+  **5-Phase Reactive Pipeline**
+  Phase 1: Idempotency Check
+  Phase 2: Customer Validation
+  Phase 3: Balance Validation
+  Phase 4: Payment Deduction
+  Phase 5: Logging
+end note
+
+Service -> PymtRepo : existsByOrderId(abc-123)
+activate PymtRepo
+PymtRepo --> Service : Mono<Boolean> = false
+deactivate PymtRepo
+
+Service -> CustRepo : findById(1)
+activate CustRepo
+CustRepo --> Service : Mono<Customer>\n(id=1, balance=100)
+deactivate CustRepo
+
+Service -> Service : filter(balance >= amount)\n100 >= 50 ✓
+
+Service -> Service : deductPayment(Customer, Request)
+
+Service -> CustRepo : save(Customer)\n(balance: 100 → 50)
+activate CustRepo
+CustRepo --> Service : Mono<Customer>
+deactivate CustRepo
+
+Service -> PymtRepo : save(CustomerPayment)\n(status=DEDUCTED)
+activate PymtRepo
+PymtRepo --> Service : Mono<CustomerPayment>\n(paymentId=xyz-789)
+deactivate PymtRepo
+
+Service -> Service : map(EntityDTOMapper::toPaymentDTO)
+
+Service --> Processor : Mono<PaymentDTO>\n(paymentId=xyz-789, status=DEDUCTED)
+deactivate Service
+
+Processor -> Mapper : toPaymentDeductedEvent(PaymentDTO)
+activate Mapper
+Mapper --> Processor : PaymentEvent.PaymentDeducted\n(orderId=abc-123, paymentId=xyz-789)
+deactivate Mapper
+
+Processor -> Processor : doOnNext(log.info("payment processed..."))
+
+Processor -> Processor : transform(exceptionHandler(event))\n(no error, passes through)
+
+Processor --> Config : Mono<PaymentEvent.PaymentDeducted>
+deactivate Processor
+
+Config -> Config : doOnSuccess(cr.acknowledgement().acknowledge())
+note right: Kafka offset committed\nMessage won't be redelivered
+
+Config -> Config : toMessage(PaymentEvent)
+note right
+  MessageBuilder.withPayload(evt)
+    .setHeader(KafkaHeaders.KEY, orderId)
+    .build()
+end note
+
+Config --> SCS : Flux<Message<PaymentEvent>>
+deactivate Config
+
+SCS -> PaymentTopic : Message<PaymentEvent.PaymentDeducted>\n(key="abc-123")
+deactivate SCS
+
+' ==========================================
+' SCENARIO 2: CUSTOMER NOT FOUND (Error Recovery)
+' ==========================================
+
+== Scenario 2: Customer Not Found (Error Recovery) ==
+
+KafkaTopic -> SCS : Message<OrderEvent.OrderCreated>\n(orderId=def-456, customerId=999, amount=50)
+activate SCS
+
+SCS -> Config : Flux<Message<OrderEvent>>
+activate Config
+
+Config -> Converter : MessageConverter.toRecord(message)
+activate Converter
+Converter --> Config : CustomRecord<OrderEvent>
+deactivate Converter
+
+Config -> Config : doOnNext(log.info(...))
+
+Config -> Processor : evtProcessor.process(OrderEvent.OrderCreated)
+activate Processor
+
+Processor -> Mapper : toPaymentProcessRequest(OrderCreated)
+activate Mapper
+Mapper --> Processor : PaymentProcessRequest
+deactivate Mapper
+
+Processor -> Service : processPayment(PaymentProcessRequest)
+activate Service
+
+Service -> PymtRepo : existsByOrderId(def-456)
+activate PymtRepo
+PymtRepo --> Service : Mono<Boolean> = false
+deactivate PymtRepo
+
+Service -> CustRepo : findById(999)
+activate CustRepo
+CustRepo --> Service : Mono.empty() (not found!)
+deactivate CustRepo
+
+Service -> Service : switchIfEmpty(CUSTOMER_NOT_FOUND)
+
+Service --> Processor : Mono.error(CustomerNotFoundException)
+deactivate Service
+
+note over Processor #FFAAAA
+  **Error Signal Propagates**
+  .map() SKIPPED
+  .doOnNext() SKIPPED
+end note
+
+Processor -> Processor : transform(exceptionHandler(event))
+
+note over Processor
+  **Three-Tier Exception Handler**
+  
+  Tier 1: EventAlreadyProcessedException?
+    → No match
+  
+  Tier 2: (Specific handlers - commented out)
+  
+  Tier 3: Catch-all
+    → MATCHES!
+end note
+
+Processor -> Mapper : toPaymentFailedEvent(OrderCreated).apply(ex)
+activate Mapper
+
+note right of Mapper
+  Closure captures original event:
+  • orderId from OrderCreated
+  • customerId from OrderCreated
+  • amount from OrderCreated
+  • message from exception
+end note
+
+Mapper --> Processor : Mono<PaymentEvent.PaymentFailed>\n(orderId=def-456, message="Customer not found")
+deactivate Mapper
+
+Processor --> Config : Mono<PaymentEvent.PaymentFailed>
+deactivate Processor
+
+Config -> Config : doOnSuccess(cr.acknowledgement().acknowledge())
+note right: Error recovered!\nAcknowledge message
+
+Config -> Config : toMessage(PaymentEvent)
+
+Config --> SCS : Flux<Message<PaymentEvent>>
+deactivate Config
+
+SCS -> PaymentTopic : Message<PaymentEvent.PaymentFailed>\n(key="def-456")
+deactivate SCS
+
+' ==========================================
+' NOTES
+' ==========================================
+
+note over KafkaTopic, PaymentTopic
+  **Key Concepts Demonstrated (Part 1)**
+  
+  1. **Reactive Pipeline**: Flux/Mono composition with concatMap for sequential processing
+  2. **Manual Acknowledgment**: doOnSuccess() commits Kafka offset only after successful processing
+  3. **Pattern Matching**: Sealed interface enables exhaustive event routing
+  4. **Error Recovery**: Three-tier exception handler transforms errors to domain events
+  5. **Separation of Concerns**: Config (Kafka) → Processor (Routing) → Service (Business Logic)
+  
+  **See Part 2 for**: Duplicate Event Handling & Saga Compensation (Refund)
+end note
+
+@enduml

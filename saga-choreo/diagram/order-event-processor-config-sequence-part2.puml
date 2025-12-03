@@ -1,0 +1,227 @@
+@startuml OrderEventProcessorConfig Sequence Diagram - Part 2
+
+title OrderEventProcessorConfig - Reactive Processing Flow (Part 2: Idempotency & Saga Compensation)
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 200
+
+' ==========================================
+' PARTICIPANTS
+' ==========================================
+
+box "Kafka Infrastructure" #LightGray
+    participant "Kafka Topic\n(order-events)" as KafkaTopic
+    participant "Spring Cloud\nStream" as SCS
+end box
+
+box "Messaging Layer" #LightGreen
+    participant "OrderEventProcessorConfig" as Config
+    participant "MessageConverter" as Converter
+    participant "OrderEventProcessorImpl" as Processor
+    participant "EventDTOMapper" as Mapper
+end box
+
+box "Service Layer" #LightBlue
+    participant "PaymentServiceImpl" as Service
+end box
+
+box "Data Layer" #LightCoral
+    participant "PaymentRepository" as PymtRepo
+    participant "CustomerRepository" as CustRepo
+end box
+
+box "Kafka Infrastructure" #LightGray
+    participant "Kafka Topic\n(payment-events)" as PaymentTopic
+end box
+
+' ==========================================
+' SCENARIO 3: DUPLICATE EVENT (Silent Swallow)
+' ==========================================
+
+== Scenario 3: Duplicate Event (Silent Swallow) ==
+
+KafkaTopic -> SCS : Message<OrderEvent.OrderCreated>\n(orderId=abc-123, REDELIVERED)
+activate SCS
+
+SCS -> Config : Flux<Message<OrderEvent>>
+activate Config
+
+Config -> Converter : MessageConverter.toRecord(message)
+activate Converter
+Converter --> Config : CustomRecord<OrderEvent>
+deactivate Converter
+
+Config -> Config : doOnNext(log.info(...))
+
+Config -> Processor : evtProcessor.process(OrderEvent.OrderCreated)
+activate Processor
+
+Processor -> Mapper : toPaymentProcessRequest(OrderCreated)
+activate Mapper
+Mapper --> Processor : PaymentProcessRequest
+deactivate Mapper
+
+Processor -> Service : processPayment(PaymentProcessRequest)
+activate Service
+
+Service -> PymtRepo : existsByOrderId(abc-123)
+activate PymtRepo
+PymtRepo --> Service : Mono<Boolean> = **true** (already exists!)
+deactivate PymtRepo
+
+note over Service #FFAAAA
+  **DuplicateEventValidator**
+  b = true → Mono.error(EventAlreadyProcessedException)
+end note
+
+Service --> Processor : Mono.error(EventAlreadyProcessedException)
+deactivate Service
+
+Processor -> Processor : transform(exceptionHandler(event))
+
+note over Processor #AAFFAA
+  **Tier 1: Idempotency Protection**
+  
+  .onErrorResume(
+    EventAlreadyProcessedException.class,
+    e -> Mono.empty()
+  )
+  
+  → MATCHES! Silent swallow
+end note
+
+Processor --> Config : Mono.empty()
+deactivate Processor
+
+note over Config #AAFFAA
+  **Mono.empty() Handling**
+  
+  concatMap returns empty
+  → No element emitted
+  → doOnSuccess NOT called
+  → toMessage NOT called
+  
+  But Flux continues for next events
+end note
+
+Config --> SCS : Flux<Message<PaymentEvent>> (no element for this event)
+deactivate Config
+
+note over SCS
+  No message published
+  (duplicate silently ignored)
+end note
+
+deactivate SCS
+
+' ==========================================
+' SCENARIO 4: ORDER CANCELLED (Compensation)
+' ==========================================
+
+== Scenario 4: Order Cancelled (Compensation/Refund) ==
+
+KafkaTopic -> SCS : Message<OrderEvent.OrderCancelled>\n(orderId=abc-123, message="Inventory failed")
+activate SCS
+
+SCS -> Config : Flux<Message<OrderEvent>>
+activate Config
+
+Config -> Converter : MessageConverter.toRecord(message)
+activate Converter
+Converter --> Config : CustomRecord<OrderEvent>
+deactivate Converter
+
+Config -> Config : doOnNext(log.info(...))
+
+Config -> Processor : evtProcessor.process(OrderEvent.OrderCancelled)
+activate Processor
+
+note over Processor
+  **Pattern Matching**
+  case OrderCancelled e -> handle(e)
+end note
+
+Processor -> Service : processRefund(orderId=abc-123)
+activate Service
+
+note over Service
+  **4-Phase Refund Pipeline**
+  Phase 1: Find DEDUCTED payment
+  Phase 2: Zip with Customer
+  Phase 3: Execute refund
+  Phase 4: Logging
+end note
+
+Service -> PymtRepo : findByOrderIdAndStatus(abc-123, DEDUCTED)
+activate PymtRepo
+PymtRepo --> Service : Mono<CustomerPayment>\n(paymentId=xyz-789, customerId=1, amount=50)
+deactivate PymtRepo
+
+Service -> Service : zipWhen(custPymt -> custRepo.findById(1))
+
+Service -> CustRepo : findById(1)
+activate CustRepo
+CustRepo --> Service : Mono<Customer>\n(id=1, balance=50)
+deactivate CustRepo
+
+note over Service
+  Tuple2<CustomerPayment, Customer>
+  T1: CustomerPayment
+  T2: Customer
+end note
+
+Service -> Service : flatMap(tup -> refundPayment(T1, T2))
+
+Service -> Service : refundPayment(CustomerPayment, Customer)\nbalance: 50 + 50 = 100\nstatus: REFUNDED
+
+Service -> CustRepo : save(Customer)\n(balance: 50 → 100)
+activate CustRepo
+CustRepo --> Service : Mono<Customer>
+deactivate CustRepo
+
+Service -> PymtRepo : save(CustomerPayment)\n(status=REFUNDED)
+activate PymtRepo
+PymtRepo --> Service : Mono<CustomerPayment>
+deactivate PymtRepo
+
+Service --> Processor : Mono<PaymentDTO>\n(paymentId=xyz-789, status=REFUNDED)
+deactivate Service
+
+Processor -> Mapper : toPaymentRefundedEvent(PaymentDTO)
+activate Mapper
+Mapper --> Processor : PaymentEvent.PaymentRefunded\n(orderId=abc-123, amount=50)
+deactivate Mapper
+
+Processor -> Processor : doOnNext(log.info("payment refunded..."))
+
+Processor --> Config : Mono<PaymentEvent.PaymentRefunded>
+deactivate Processor
+
+Config -> Config : doOnSuccess(cr.acknowledgement().acknowledge())
+
+Config -> Config : toMessage(PaymentEvent)
+
+Config --> SCS : Flux<Message<PaymentEvent>>
+deactivate Config
+
+SCS -> PaymentTopic : Message<PaymentEvent.PaymentRefunded>\n(key="abc-123")
+deactivate SCS
+
+' ==========================================
+' NOTES
+' ==========================================
+
+note over KafkaTopic, PaymentTopic
+  **Key Concepts Demonstrated (Part 2)**
+  
+  1. **Idempotency**: Duplicate events silently swallowed via EventAlreadyProcessedException
+  2. **Saga Choreography**: OrderCancelled triggers compensating transaction (refund)
+  3. **zipWhen Operator**: Reactive join preserving both CustomerPayment and Customer
+  4. **Status Guard**: Only DEDUCTED payments qualify for refund (implicit idempotency)
+  5. **Sequential Persistence**: .then() ensures customer balance updates before payment status
+  
+  **See Part 1 for**: Happy Path & Error Recovery scenarios
+end note
+
+@enduml
+

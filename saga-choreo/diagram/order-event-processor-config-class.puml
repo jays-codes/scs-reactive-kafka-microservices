@@ -1,0 +1,328 @@
+@startuml OrderEventProcessorConfig Class Diagram
+
+title OrderEventProcessorConfig - Class Diagram
+
+' ==========================================
+' LAYOUT CONFIGURATION - Portrait Orientation
+' ==========================================
+skinparam classAttributeIconSize 0
+skinparam classFontSize 11
+skinparam packageFontSize 12
+skinparam nodesep 20
+skinparam ranksep 20
+skinparam padding 2
+
+' Force top-to-bottom layout
+top to bottom direction
+
+' ==========================================
+' ROW 1: ENTRY POINT (Config)
+' ==========================================
+
+package "customer-payment :: messaging.config" as pkg_config #LightGreen {
+    class OrderEventProcessorConfig <<@Configuration>> {
+        - log : Logger
+        - evtProcessor : OrderEventProcessor<PaymentEvent>
+        --
+        + processor() : Function<Flux<Message<OrderEvent>>, Flux<Message<PaymentEvent>>>
+        - toMessage(evt : PaymentEvent) : Message<PaymentEvent>
+    }
+}
+
+' ==========================================
+' ROW 2: PROCESSOR & MAPPER (Side by Side)
+' ==========================================
+
+package "customer-payment :: messaging.processor" as pkg_processor #LightGreen {
+    class OrderEventProcessorImpl <<@Service>> {
+        - log : Logger
+        - service : PaymentService
+        --
+        + handle(e : OrderCreated) : Mono<PaymentEvent>
+        + handle(e : OrderCancelled) : Mono<PaymentEvent>
+        + handle(e : OrderCompleted) : Mono<PaymentEvent>
+        - exceptionHandler(evt) : UnaryOperator<Mono<PaymentEvent>>
+    }
+}
+
+package "customer-payment :: messaging.mapper" as pkg_mapper #LightGreen {
+    class EventDTOMapper <<utility>> {
+        {static} + toPaymentProcessRequest(evt) : PaymentProcessRequest
+        {static} + toPaymentDeductedEvent(dto) : PaymentEvent
+        {static} + toPaymentRefundedEvent(dto) : PaymentEvent
+        {static} + toPaymentFailedEvent(evt) : Function<Throwable, Mono<PaymentEvent>>
+    }
+}
+
+' ==========================================
+' ROW 3: SERVICE LAYER
+' ==========================================
+
+package "customer-payment :: service" as pkg_service #LightCoral {
+    interface PaymentService <<interface>> {
+        + processPayment(request) : Mono<PaymentDTO>
+        + processRefund(orderId) : Mono<PaymentDTO>
+    }
+    
+    class PaymentServiceImpl <<@Service>> {
+        - custRepo : CustomerRepository
+        - pymtRepo : PaymentRepository
+        --
+        + processPayment(reqDTO) : Mono<PaymentDTO>
+        + processRefund(orderId) : Mono<PaymentDTO>
+        - deductPayment(customer, reqDTO) : Mono<PaymentDTO>
+        - refundPayment(custPymt, cust) : Mono<PaymentDTO>
+    }
+    
+    PaymentServiceImpl ..|> PaymentService
+}
+
+' ==========================================
+' ROW 4: REPOSITORY & ENTITY (Side by Side)
+' ==========================================
+
+package "customer-payment :: repository" as pkg_repo #LightCoral {
+    interface CustomerRepository <<@Repository>> {
+        + findById(id) : Mono<Customer>
+        + save(customer) : Mono<Customer>
+    }
+    
+    interface PaymentRepository <<@Repository>> {
+        + existsByOrderId(orderId) : Mono<Boolean>
+        + findByOrderIdAndStatus(orderId, status) : Mono<CustomerPayment>
+        + save(payment) : Mono<CustomerPayment>
+    }
+}
+
+package "customer-payment :: entity" as pkg_entity #LightCoral {
+    class Customer <<@Data>> {
+        + id : Integer
+        + name : String
+        + balance : Integer
+    }
+    
+    class CustomerPayment <<@Data>> {
+        + paymentId : UUID
+        + orderId : UUID
+        + customerId : Integer
+        + amount : Integer
+        + status : PaymentStatus
+    }
+}
+
+' ==========================================
+' ROW 5: CHOREO-COMMON INTERFACES (Side by Side)
+' ==========================================
+
+package "choreo-common :: processor" as pkg_evt_processor #Wheat {
+    interface EventProcessor<T, R> <<interface>> {
+        + process(event : T) : Mono<R>
+    }
+    
+    interface OrderEventProcessor<R> <<interface>> {
+        + {default} process(event : OrderEvent) : Mono<R>
+        + handle(e : OrderCreated) : Mono<R>
+        + handle(e : OrderCancelled) : Mono<R>
+        + handle(e : OrderCompleted) : Mono<R>
+    }
+    
+    OrderEventProcessor --|> EventProcessor
+}
+
+package "choreo-common :: util" as pkg_util #Wheat {
+    class MessageConverter <<utility>> {
+        {static} + toRecord(msg) : CustomRecord<T>
+    }
+    
+    class CustomRecord<T> <<record>> {
+        + key : String
+        + message : T
+        + acknowledgement : ReceiverOffset
+    }
+    
+    MessageConverter --> CustomRecord : creates
+}
+
+' ==========================================
+' ROW 6: DOMAIN EVENTS (Side by Side)
+' ==========================================
+
+package "choreo-common :: events.order" as pkg_order_evt #Wheat {
+    interface OrderEvent <<sealed>> {
+    }
+    
+    class OrderCreated <<record>> {
+        + orderId : UUID
+        + customerId : Integer
+        + totalAmount : Integer
+        + createdAt : Instant
+    }
+    
+    class OrderCancelled <<record>> {
+        + orderId : UUID
+        + message : String
+        + createdAt : Instant
+    }
+    
+    class OrderCompleted <<record>> {
+        + orderId : UUID
+        + createdAt : Instant
+    }
+    
+    OrderCreated ..|> OrderEvent
+    OrderCancelled ..|> OrderEvent
+    OrderCompleted ..|> OrderEvent
+}
+
+package "choreo-common :: events.payment" as pkg_pymt_evt #Wheat {
+    interface PaymentEvent <<sealed>> {
+    }
+    
+    class PaymentDeducted <<record>> {
+        + orderId : UUID
+        + paymentId : UUID
+        + amount : Integer
+        + createdAt : Instant
+    }
+    
+    class PaymentRefunded <<record>> {
+        + orderId : UUID
+        + paymentId : UUID
+        + amount : Integer
+        + createdAt : Instant
+    }
+    
+    class PaymentFailed <<record>> {
+        + orderId : UUID
+        + message : String
+        + createdAt : Instant
+    }
+    
+    PaymentDeducted ..|> PaymentEvent
+    PaymentRefunded ..|> PaymentEvent
+    PaymentFailed ..|> PaymentEvent
+}
+
+' ==========================================
+' ROW 7: EXTERNAL FRAMEWORKS (Side by Side)
+' ==========================================
+
+package "Spring / Reactor" as pkg_framework #LightGray {
+    interface "Message<T>" as SpringMessage <<interface>> {
+        + getPayload() : T
+        + getHeaders() : MessageHeaders
+    }
+    
+    class MessageBuilder <<utility>> {
+        {static} + withPayload(payload) : MessageBuilder<T>
+        + setHeader(key, value) : MessageBuilder<T>
+        + build() : Message<T>
+    }
+    
+    interface ReceiverOffset <<interface>> {
+        + acknowledge() : void
+    }
+    
+    class "Flux<T>" as Flux <<reactive>> {
+        + map() : Flux<R>
+        + concatMap() : Flux<R>
+        + doOnNext() : Flux<T>
+    }
+    
+    class "Mono<T>" as Mono <<reactive>> {
+        + map() : Mono<R>
+        + flatMap() : Mono<R>
+        + transform() : Mono<R>
+        + onErrorResume() : Mono<T>
+    }
+}
+
+package "Spring Data" as pkg_spring_data #LightGray {
+    interface "ReactiveCrudRepository<T, ID>" as ReactiveCrudRepository <<interface>> {
+        + findById(id) : Mono<T>
+        + save(entity) : Mono<T>
+        + existsById(id) : Mono<Boolean>
+    }
+}
+
+' ==========================================
+' RELATIONSHIPS (Cross-Package)
+' ==========================================
+
+' Config dependencies
+OrderEventProcessorConfig --> OrderEventProcessor : injects
+OrderEventProcessorConfig --> MessageConverter : uses
+OrderEventProcessorConfig --> MessageBuilder : uses
+OrderEventProcessorConfig ..> SpringMessage : produces
+OrderEventProcessorConfig ..> Flux : returns
+
+' Processor dependencies
+OrderEventProcessorImpl ..|> OrderEventProcessor : implements
+OrderEventProcessorImpl --> PaymentService : injects
+OrderEventProcessorImpl --> EventDTOMapper : uses
+OrderEventProcessorImpl ..> Mono : returns
+
+' Mapper dependencies
+EventDTOMapper ..> PaymentEvent : creates
+EventDTOMapper ..> OrderEvent : consumes
+
+' Util dependencies
+CustomRecord --> ReceiverOffset : contains
+
+' Repository relationships
+CustomerRepository --|> ReactiveCrudRepository : extends
+PaymentRepository --|> ReactiveCrudRepository : extends
+PaymentServiceImpl --> CustomerRepository : injects
+PaymentServiceImpl --> PaymentRepository : injects
+CustomerRepository ..> Customer : manages
+PaymentRepository ..> CustomerPayment : manages
+
+' ==========================================
+' LAYOUT HINTS (Force Vertical Stacking)
+' ==========================================
+
+' Main vertical spine (left column)
+pkg_config -[hidden]down- pkg_processor
+pkg_processor -[hidden]down- pkg_service
+pkg_service -[hidden]down- pkg_repo
+pkg_repo -[hidden]down- pkg_evt_processor
+pkg_evt_processor -[hidden]down- pkg_order_evt
+pkg_order_evt -[hidden]down- pkg_framework
+
+' Right column alignment (side-by-side pairs)
+pkg_processor -[hidden]right- pkg_mapper
+pkg_repo -[hidden]right- pkg_entity
+pkg_evt_processor -[hidden]right- pkg_util
+pkg_order_evt -[hidden]right- pkg_pymt_evt
+pkg_framework -[hidden]right- pkg_spring_data
+
+' Ensure right column also stacks vertically
+pkg_mapper -[hidden]down- pkg_entity
+pkg_entity -[hidden]down- pkg_util
+pkg_util -[hidden]down- pkg_pymt_evt
+pkg_pymt_evt -[hidden]down- pkg_spring_data
+
+' ==========================================
+' NOTES (Compact)
+' ==========================================
+
+note right of OrderEventProcessorConfig
+  **Spring Cloud Stream Entry Point**
+  Function<Flux<IN>, Flux<OUT>>
+  Handles Kafka ↔ Domain bridging
+end note
+
+note bottom of OrderEventProcessor
+  **Pattern Matching Router**
+  Java 21 sealed interface
+  exhaustive switch routing
+end note
+
+note right of OrderEventProcessorImpl
+  **Three-Tier Error Handler**
+  1. Duplicate → Mono.empty()
+  2. Specific exceptions (opt)
+  3. Catch-all → PaymentFailed
+end note
+
+@enduml
