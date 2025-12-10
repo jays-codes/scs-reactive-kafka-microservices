@@ -1,6 +1,7 @@
 package jayslabs.kafka.payment;
 
 import java.time.Duration;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -99,7 +100,58 @@ public class PaymentServiceTest extends AbstractIntegrationTest{
         
     }
 
-    
+    @Test
+    public void refundWithoutDeductTest(){
+         var ordCancEvt = TestDataUtil.createOrderCancelledEvent(UUID.randomUUID());  
+         respFlux
+         .doFirst(() -> reqSink.tryEmitNext(ordCancEvt)) //use sink to emit the order created event
+         .next() //wait for Mono<PaymentEvent> to be emitted
+         .timeout(Duration.ofSeconds(2), Mono.empty()) //timeout if no event is emitted in 2 second
+         .as(StepVerifier::create)
+         .verifyComplete();
+    }
+
+    @Test
+    public void customerNotFoundTest(){
+      var orderCreatedEvt = TestDataUtil.createOrderCreatedEvent(19, 1, 2, 3);
+
+      respFlux //start listening for response (PaymentEvent)
+         .doFirst(() -> reqSink.tryEmitNext(orderCreatedEvt))
+         .next() 
+         .timeout(Duration.ofSeconds(2), Mono.empty()) 
+         .cast(PaymentEvent.PaymentFailed.class) 
+         .as(StepVerifier::create)
+         .consumeNextWith(
+            e -> {
+               Assertions.assertEquals(orderCreatedEvt.orderId(), e.orderId());
+               Assertions.assertEquals(6, e.amount());
+               Assertions.assertEquals("Customer not found", e.message());
+            }
+         )
+         .verifyComplete();
+    }
+
+    @Test
+    public void insufficientBalanceTest(){
+      var orderCreatedEvt = TestDataUtil.createOrderCreatedEvent(1, 1, 50, 3);
+
+      respFlux //start listening for response (PaymentEvent)
+         .doFirst(() -> reqSink.tryEmitNext(orderCreatedEvt))
+         .next() 
+         .timeout(Duration.ofSeconds(2), Mono.empty()) 
+         .cast(PaymentEvent.PaymentFailed.class) 
+         .as(StepVerifier::create)
+         .consumeNextWith(
+            e -> {
+               Assertions.assertEquals(orderCreatedEvt.orderId(), e.orderId());
+               Assertions.assertEquals(150, e.amount());
+               Assertions.assertEquals("Customer does not have sufficient balance", e.message());
+            }
+         )
+         .verifyComplete();
+    }
+
+
     @TestConfiguration
     static class TestConfig{
 
