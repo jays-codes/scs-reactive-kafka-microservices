@@ -6,13 +6,16 @@ import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.test.context.TestPropertySource;
 
 import jayslabs.kafka.common.events.order.OrderEvent;
 import jayslabs.kafka.common.events.payment.PaymentEvent;
+import jayslabs.kafka.payment.application.repository.CustomerRepository;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
 
@@ -26,17 +29,22 @@ public class PaymentServiceTest extends AbstractIntegrationTest{
 
     private static final Sinks.Many<OrderEvent> reqSink = Sinks.many().unicast().onBackpressureBuffer();
     private static final Sinks.Many<PaymentEvent> respSink = Sinks.many().unicast().onBackpressureBuffer();
+    private static final Flux<PaymentEvent> respFlux = respSink.asFlux().cache(0); //cache the response flux
+
+    @Autowired
+    private CustomerRepository custrepo;
 
     @Test
-    public void processPaymentTest(){
+    public void deductAndRefundTest(){
 
         //create test data -> OrderEvent.OrderCreated
         var orderCreatedEvt = TestDataUtil.createOrderCreatedEvent(1, 1, 2, 3);
 
-        respSink.asFlux() //start listening for response (PaymentEvent)
+        //deduct payment test
+        respFlux //start listening for response (PaymentEvent)
            .doFirst(() -> reqSink.tryEmitNext(orderCreatedEvt)) //use sink to emit the order created event
            .next() //wait for Mono<PaymentEvent> to be emitted
-           .timeout(Duration.ofSeconds(5)) //timeout if no event is emitted in 5 second
+           .timeout(Duration.ofSeconds(2)) //timeout if no event is emitted in 2 second
            .cast(PaymentEvent.PaymentDeducted.class) //cast PaymentEvent to PaymentEvent.PaymentDeducted (Mono)
            .as(StepVerifier::create)
            .consumeNextWith(
@@ -47,6 +55,48 @@ public class PaymentServiceTest extends AbstractIntegrationTest{
                }
            )
            .verifyComplete();
+
+        //check balance test
+        this.custrepo.findById(1)
+           .as(StepVerifier::create)
+           .consumeNextWith(
+            cust -> Assertions.assertEquals(94, cust.getBalance())
+           )
+           .verifyComplete();
+
+        //check duplicate event test
+        respFlux //start listening for response (PaymentEvent)
+        .doFirst(() -> reqSink.tryEmitNext(orderCreatedEvt)) //use sink to emit the order created event
+        .next() //wait for Mono<PaymentEvent> to be emitted
+        .timeout(Duration.ofSeconds(2), Mono.empty()) //timeout if no event is emitted in 2 second
+        .as(StepVerifier::create)
+        .verifyComplete();
+
+        //test cancelled event and refund test
+        var ordCancEvt = TestDataUtil.createOrderCancelledEvent(orderCreatedEvt.orderId());
+        respFlux
+        .doFirst(() -> reqSink.tryEmitNext(ordCancEvt)) //use sink to emit the order created event
+        .next() //wait for Mono<PaymentEvent> to be emitted
+        .timeout(Duration.ofSeconds(2)) //timeout if no event is emitted in 2 second
+        .cast(PaymentEvent.PaymentRefunded.class) //cast PaymentEvent to PaymentEvent.PaymentDeducted (Mono)
+        .as(StepVerifier::create)
+        .consumeNextWith(
+            evt -> {
+               Assertions.assertNotNull(evt.paymentId());
+               Assertions.assertEquals(ordCancEvt.orderId(), evt.orderId());
+               Assertions.assertEquals(6, evt.amount());
+            }
+        )
+        .verifyComplete();
+
+        //check balance test after refund
+        this.custrepo.findById(1)
+           .as(StepVerifier::create)
+           .consumeNextWith(
+            cust -> Assertions.assertEquals(100, cust.getBalance())
+           )
+           .verifyComplete();        
+        
     }
 
     
