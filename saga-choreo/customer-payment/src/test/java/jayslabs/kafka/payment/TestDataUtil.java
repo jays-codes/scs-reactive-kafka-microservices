@@ -21,7 +21,7 @@ public class TestDataUtil {
     }
 
     public static OrderEvent.OrderCancelled createOrderCancelledEvent(
-        UUID orderId, String msg){
+        UUID orderId){
             return OrderEvent.OrderCancelled.builder()
                 .orderId(orderId)
                 .createdAt(Instant.now())
