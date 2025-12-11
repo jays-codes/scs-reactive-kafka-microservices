@@ -38,24 +38,14 @@ public class PaymentServiceTest extends AbstractIntegrationTest{
     @Test
     public void deductAndRefundTest(){
 
-        //create test data -> OrderEvent.OrderCreated
-        var orderCreatedEvt = TestDataUtil.createOrderCreatedEvent(1, 1, 2, 3);
-
         //deduct payment test
-        respFlux //start listening for response (PaymentEvent)
-           .doFirst(() -> reqSink.tryEmitNext(orderCreatedEvt)) //use sink to emit the order created event
-           .next() //wait for Mono<PaymentEvent> to be emitted
-           .timeout(Duration.ofSeconds(2)) //timeout if no event is emitted in 2 second
-           .cast(PaymentEvent.PaymentDeducted.class) //cast PaymentEvent to PaymentEvent.PaymentDeducted (Mono)
-           .as(StepVerifier::create)
-           .consumeNextWith(
-               e -> {
-                  Assertions.assertNotNull(e.paymentId());
-                  Assertions.assertEquals(orderCreatedEvt.orderId(), e.orderId());
-                  Assertions.assertEquals(6, e.amount());
-               }
-           )
-           .verifyComplete();
+        //valid order created event
+        var orderCreatedEvt = TestDataUtil.createOrderCreatedEvent(1, 1, 2, 3);
+        expectEvent(orderCreatedEvt, PaymentEvent.PaymentDeducted.class, e -> {
+            Assertions.assertNotNull(e.paymentId());
+            Assertions.assertEquals(orderCreatedEvt.orderId(), e.orderId());
+            Assertions.assertEquals(6, e.amount());
+        });
 
         //check balance test
         this.custrepo.findById(1)
@@ -66,29 +56,16 @@ public class PaymentServiceTest extends AbstractIntegrationTest{
            .verifyComplete();
 
         //check duplicate event test
-        respFlux //start listening for response (PaymentEvent)
-        .doFirst(() -> reqSink.tryEmitNext(orderCreatedEvt)) //use sink to emit the order created event
-        .next() //wait for Mono<PaymentEvent> to be emitted
-        .timeout(Duration.ofSeconds(2), Mono.empty()) //timeout if no event is emitted in 2 second
-        .as(StepVerifier::create)
-        .verifyComplete();
+        //pass same order created event again
+        expectNoEvent(orderCreatedEvt);
 
         //test cancelled event and refund test
         var ordCancEvt = TestDataUtil.createOrderCancelledEvent(orderCreatedEvt.orderId());
-        respFlux
-        .doFirst(() -> reqSink.tryEmitNext(ordCancEvt)) //use sink to emit the order created event
-        .next() //wait for Mono<PaymentEvent> to be emitted
-        .timeout(Duration.ofSeconds(2)) //timeout if no event is emitted in 2 second
-        .cast(PaymentEvent.PaymentRefunded.class) //cast PaymentEvent to PaymentEvent.PaymentDeducted (Mono)
-        .as(StepVerifier::create)
-        .consumeNextWith(
-            evt -> {
-               Assertions.assertNotNull(evt.paymentId());
-               Assertions.assertEquals(ordCancEvt.orderId(), evt.orderId());
-               Assertions.assertEquals(6, evt.amount());
-            }
-        )
-        .verifyComplete();
+        expectEvent(ordCancEvt, PaymentEvent.PaymentRefunded.class, e -> {
+            Assertions.assertNotNull(e.paymentId());
+            Assertions.assertEquals(ordCancEvt.orderId(), e.orderId());
+            Assertions.assertEquals(6, e.amount());
+        });
 
         //check balance test after refund
         this.custrepo.findById(1)
@@ -102,55 +79,57 @@ public class PaymentServiceTest extends AbstractIntegrationTest{
 
     @Test
     public void refundWithoutDeductTest(){
+         //OrderCancelled event with non-existing orderId
          var ordCancEvt = TestDataUtil.createOrderCancelledEvent(UUID.randomUUID());  
-         respFlux
-         .doFirst(() -> reqSink.tryEmitNext(ordCancEvt)) //use sink to emit the order created event
-         .next() //wait for Mono<PaymentEvent> to be emitted
-         .timeout(Duration.ofSeconds(2), Mono.empty()) //timeout if no event is emitted in 2 second
-         .as(StepVerifier::create)
-         .verifyComplete();
+         expectNoEvent(ordCancEvt);         
     }
 
     @Test
     public void customerNotFoundTest(){
+      //OrderCreatedEvent with non-existing customerId
       var orderCreatedEvt = TestDataUtil.createOrderCreatedEvent(19, 1, 2, 3);
 
-      respFlux //start listening for response (PaymentEvent)
-         .doFirst(() -> reqSink.tryEmitNext(orderCreatedEvt))
-         .next() 
-         .timeout(Duration.ofSeconds(2), Mono.empty()) 
-         .cast(PaymentEvent.PaymentFailed.class) 
-         .as(StepVerifier::create)
-         .consumeNextWith(
-            e -> {
+      expectEvent(
+         orderCreatedEvt, PaymentEvent.PaymentFailed.class, e -> {
                Assertions.assertEquals(orderCreatedEvt.orderId(), e.orderId());
                Assertions.assertEquals(6, e.amount());
                Assertions.assertEquals("Customer not found", e.message());
-            }
-         )
-         .verifyComplete();
+      });
     }
 
     @Test
     public void insufficientBalanceTest(){
       var orderCreatedEvt = TestDataUtil.createOrderCreatedEvent(1, 1, 50, 3);
 
-      respFlux //start listening for response (PaymentEvent)
-         .doFirst(() -> reqSink.tryEmitNext(orderCreatedEvt))
-         .next() 
-         .timeout(Duration.ofSeconds(2), Mono.empty()) 
-         .cast(PaymentEvent.PaymentFailed.class) 
-         .as(StepVerifier::create)
-         .consumeNextWith(
-            e -> {
+      expectEvent(
+         orderCreatedEvt, PaymentEvent.PaymentFailed.class, e -> {
                Assertions.assertEquals(orderCreatedEvt.orderId(), e.orderId());
                Assertions.assertEquals(150, e.amount());
                Assertions.assertEquals("Customer does not have sufficient balance", e.message());
-            }
-         )
+      });
+    }
+
+    /*
+    */
+    private <T> void expectEvent(OrderEvent evt, Class<T> type, Consumer<T> assertion){
+      respFlux //start listening for response (PaymentEvent)
+         .doFirst(() -> reqSink.tryEmitNext(evt)) //use sink to emit the order event (OrderCreated/OrderCancelled)
+         .next() //wait for Mono<PaymentEvent> to be emitted
+         .timeout(Duration.ofSeconds(2), Mono.empty()) //timeout if no event is emitted in 2 second
+         .cast(type) //cast PaymentEvent to the expected type (PaymentDeducted/PaymentRefunded/PaymentFailed)
+         .as(StepVerifier::create)
+         .consumeNextWith(assertion)
          .verifyComplete();
     }
 
+    private void expectNoEvent(OrderEvent evt){
+      respFlux //start listening for response (PaymentEvent)
+         .doFirst(() -> reqSink.tryEmitNext(evt)) //use sink to emit the order event (OrderCreated/OrderCancelled)
+         .next() //wait for Mono<PaymentEvent> to be emitted
+         .timeout(Duration.ofSeconds(2), Mono.empty()) //timeout if no event is emitted in 2 second
+         .as(StepVerifier::create)
+         .verifyComplete();
+    }
 
     @TestConfiguration
     static class TestConfig{
