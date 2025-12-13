@@ -31,7 +31,7 @@ with saga pattern for distributed transaction management
 - shipping-service: Delivery scheduling
 
 ##### Changes
-- Started on <<InventoryService>> (inventory.common.service), and InventoryServiceImpl (inventory.application.service)
+- Implemented InventoryServiceImpl (inventory.application.service), interface <<InventoryService>> (inventory.common.service)
 - Added DTO classes: InventoryDTO and InventoryProcessRequest, Added EntityDTOMapper, OutOfStockException
 - [inventory-service] created package structure similar to customer-payment; Created Product and OrderInventory entity classes; created repositories <<ProductRepository>>, <<InventoryRepository>> 
 - [BP] refactored PaymentServiceTest, added expectEvent(), and expectNoEvent()
