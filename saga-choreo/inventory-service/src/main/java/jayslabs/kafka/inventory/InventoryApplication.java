@@ -1,4 +1,4 @@
-package jayslabs.kafka;
+package jayslabs.kafka.inventory;
 
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
