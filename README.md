@@ -31,6 +31,7 @@ with saga pattern for distributed transaction management
 - shipping-service: Delivery scheduling
 
 ##### Changes
+- Implemented OrderEventProcessorConfig class (inventory.messaging.config) for InventoryService. processor is referenced in spring.cloud.stream.bindings in app.yaml
 - Implemented OrderEventProcessorImpl class (inventory.messaging.processor) for InventoryService; modified <<OrderEventProcessor>> to set handle(OrderEvent.OrderComplete) to return Mono.empty()
 - Implemented EventDTOMapper class (inventory.messaging.mapper)
 - Implemented InventoryServiceImpl (inventory.application.service), interface <<InventoryService>> (inventory.common.service)
