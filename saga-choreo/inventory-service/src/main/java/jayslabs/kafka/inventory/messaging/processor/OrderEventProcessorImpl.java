@@ -39,6 +39,11 @@ public class OrderEventProcessorImpl implements OrderEventProcessor<InventoryEve
         .doOnError(ex -> log.error("error restoring inventory", ex));
     }
 
+    @Override
+    public Mono<InventoryEvent> handle(OrderEvent.OrderCompleted event) {
+        return Mono.empty();
+    }
+    
     private UnaryOperator<Mono<InventoryEvent>> exceptionHandler(OrderEvent.OrderCreated evt){
         return mono -> mono.onErrorResume(EventAlreadyProcessedException.class, e-> Mono.empty())
         .onErrorResume(EventDTOMapper.toInventoryFailedEvent(evt));

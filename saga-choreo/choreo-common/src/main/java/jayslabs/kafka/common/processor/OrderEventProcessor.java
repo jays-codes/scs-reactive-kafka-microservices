@@ -31,7 +31,5 @@ public interface OrderEventProcessor<R extends DomainEvent>
 
     Mono<R> handle (OrderEvent.OrderCancelled e);
     
-    default Mono<R> handle (OrderEvent.OrderCompleted e){
-        return Mono.empty();
-    }
+    Mono<R> handle (OrderEvent.OrderCompleted e);
 }
