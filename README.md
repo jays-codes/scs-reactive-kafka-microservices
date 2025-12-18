@@ -32,6 +32,7 @@ with saga pattern for distributed transaction management
 
 ##### Changes
 - [shipping-service] added microservice schema: shipment table
+- verified custom inventory-service microservice against recommended implementation
 - [BP] implemented InventoryServiceTest, AbstractIntegrationTest and TestDataUtil in for Inventory-Service
 - Implemented OrderEventProcessorConfig class (inventory.messaging.config) for InventoryService. processor is referenced in spring.cloud.stream.bindings in app.yaml; copied application.yaml and modified for inventory-service; created InventoryApplication (@SpringBootApplication) class in jayslabs.kafka.inventory
 - Implemented OrderEventProcessorImpl class (inventory.messaging.processor) for InventoryService; modified <<OrderEventProcessor>> to set handle(OrderEvent.OrderComplete) to return Mono.empty()
