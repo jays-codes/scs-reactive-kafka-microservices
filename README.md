@@ -31,6 +31,7 @@ with saga pattern for distributed transaction management
 - shipping-service: Delivery scheduling
 
 ##### Changes
+- Added: pkg structure; entity class: Shipment; <<ShipmentRepository>>; dto records: CreateShippingRequest, ShipmentDTO; class EntityDTOMapper with toShipment(CreateShippineReq):Shipment, toShipmentDTO(Shipment):ShipmentDTO 
 - [shipping-service] added microservice schema: shipment table
 - verified custom inventory-service microservice against recommended implementation
 - [BP] implemented InventoryServiceTest, AbstractIntegrationTest and TestDataUtil in for Inventory-Service
