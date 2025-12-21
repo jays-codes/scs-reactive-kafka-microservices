@@ -7,7 +7,7 @@ import jayslabs.kafka.common.events.shipping.ShippingStatus;
 
 @Builder
 public record ShipmentDTO(
-    UUID id,
+    UUID shipmentId,
     UUID orderId,
     Integer productId,
     Integer customerId,

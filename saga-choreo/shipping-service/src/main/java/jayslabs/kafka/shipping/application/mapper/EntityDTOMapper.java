@@ -16,7 +16,7 @@ public class EntityDTOMapper {
 
     public static ShipmentDTO toShipmentDTO(Shipment shipment){
         return ShipmentDTO.builder()
-        .id(shipment.getId())
+        .shipmentId(shipment.getId())
         .orderId(shipment.getOrderId())
         .productId(shipment.getProductId())
         .customerId(shipment.getCustomerId())

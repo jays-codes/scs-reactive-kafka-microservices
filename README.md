@@ -31,6 +31,8 @@ with saga pattern for distributed transaction management
 - shipping-service: Delivery scheduling
 
 ##### Changes
+- added ShippingService interface (common.service) defining saga-correlated contracts: createShipmentRecord(CreateShippingRequest) for initial shipment creation, cancelShipment(orderId) for compensating transaction (uses orderId as saga correlation ID matching OrderEvent.OrderCancelled payload), scheduleShipment(orderId) for delivery scheduling (triggered by InventoryEvent.InventoryDeducted); 
+Modified ShipmentDTO to change field from id to shipmentid; reflected change to EntityDTOMapper; Added application.yaml configuring Spring Cloud Stream processor function consuming order-events (shipping-group consumer) and producing shipping-events, JSON serialization/deserialization with trusted packages for sealed interfaces; Pattern follows saga choreography where services use orderId (not entity IDs) for distributed transaction coordination via repository query findByOrderIdAndStatus(); Added deleteByOrderId() to ShipmentRepository
 - Added: pkg structure; entity class: Shipment; <<ShipmentRepository>>; dto records: CreateShippingRequest, ShipmentDTO; class EntityDTOMapper with toShipment(CreateShippineReq):Shipment, toShipmentDTO(Shipment):ShipmentDTO 
 - [shipping-service] added microservice schema: shipment table
 - verified custom inventory-service microservice against recommended implementation
