@@ -33,10 +33,8 @@ public class ShippingServiceImpl implements ShippingService {
     public Mono<Void> createShipmentRecord(CreateShippingRequest reqDTO) {
         return DuplicateEventValidator.validate(
             this.shipmentRepo.existsByOrderId(reqDTO.orderId()),
-            this.createShipmentRec(reqDTO)
-        )
-        .doOnNext(shipment -> log.info("Shipment record created for orderId: {}", shipment.getOrderId()))
-        .then();
+            Mono.defer(() -> this.createShipmentRec(reqDTO))
+        );
     }
 
     private Mono<Void> createShipmentRec(CreateShippingRequest reqDTO) {

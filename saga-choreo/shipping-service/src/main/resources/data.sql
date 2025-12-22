@@ -6,6 +6,6 @@ CREATE TABLE shipment (
    product_id int,
    customer_id int,
    quantity int,
-   status VARCHAR(50) DEFAULT 'PENDING',
+   status VARCHAR(50),
    delivery_date TIMESTAMP DEFAULT NULL
 );
