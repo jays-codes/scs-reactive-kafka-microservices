@@ -1,6 +1,6 @@
 package jayslabs.kafka.shipping.messaging.config;
 
-import java.util.function.Consumer;
+//import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.slf4j.Logger;
@@ -25,24 +25,35 @@ public class OrderEventProcessorConfig {
     private static final Logger log = LoggerFactory.getLogger(OrderEventProcessorConfig.class);
     private final OrderEventProcessor<ShippingEvent> evtProcessor;
 
-    @Bean
-    public Consumer<Flux<Message<OrderEvent>>> consumer(){
-        return flux -> flux.map(MessageConverter::toRecord)
-        .doOnNext(cr -> log.info("shipping processed: {}", cr.message()))
-        .concatMap(cr -> this.evtProcessor.process(cr.message())
-        .doOnSuccess(evt -> cr.acknowledgement().acknowledge())
-        ).subscribe();
-    }
+    // @Bean
+    // public Consumer<Flux<Message<OrderEvent>>> consumer(){
+    //     return flux -> flux.map(MessageConverter::toRecord)
+    //     .doOnNext(cr -> log.info("shipping processed: {}", cr.message()))
+    //     .concatMap(cr -> this.evtProcessor.process(cr.message())
+    //     .doOnSuccess(evt -> cr.acknowledgement().acknowledge())
+    //     ).subscribe();
+    // }
 
-    //Configuration for responding to OrderEvent.OrderCompleted
     @Bean
-    public Function<Flux<Message<OrderEvent.OrderCompleted>>, Flux<Message<ShippingEvent>>> orderCompletedProcessor(){
+    public Function<Flux<Message<OrderEvent>>, Flux<Message<ShippingEvent>>> processor(){
         return flux -> flux.map(MessageConverter::toRecord)
-        .doOnNext(cr -> log.info("shipping scheduled: {}", cr.message()))
+        .doOnNext(cr -> log.info("shipping service received: {}", cr.message()))
         .concatMap(cr -> this.evtProcessor.process(cr.message())
         .doOnSuccess(evt -> cr.acknowledgement().acknowledge())
         ).map(this::toMessage);
     }
+
+
+
+    //Configuration for responding to OrderEvent.OrderCompleted
+    // @Bean
+    // public Function<Flux<Message<OrderEvent.OrderCompleted>>, Flux<Message<ShippingEvent>>> orderCompletedProcessor(){
+    //     return flux -> flux.map(MessageConverter::toRecord)
+    //     .doOnNext(cr -> log.info("shipping scheduled: {}", cr.message()))
+    //     .concatMap(cr -> this.evtProcessor.process(cr.message())
+    //     .doOnSuccess(evt -> cr.acknowledgement().acknowledge())
+    //     ).map(this::toMessage);
+    // }
 
     private Message<ShippingEvent> toMessage(ShippingEvent evt){
         return MessageBuilder.withPayload(evt)
