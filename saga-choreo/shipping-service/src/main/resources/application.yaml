@@ -1,16 +1,19 @@
 spring:
   cloud:
     function:
-      definition: processor;shippingEventProducer
+      definition: consumer;orderCompletedProcessor
     stream:
       default:
         producer:
           useNativeEncoding: true
       bindings:
-        processor-in-0:
+        consumer-in-0:
           destination: order-events
           group: shipping-group
-        shippingEventProducer-out-0:
+        orderCompletedProcessor-in-0:
+          destination: order-events
+          group: shipping-group
+        orderCompletedProcessor-out-0:
           destination: shipping-events
       kafka:
         binder:
