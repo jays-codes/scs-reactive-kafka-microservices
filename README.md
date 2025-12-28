@@ -31,6 +31,7 @@ with saga pattern for distributed transaction management
 - shipping-service: Delivery scheduling
 
 ##### Changes
+- added Service inteface (order.common.service): <<OrderService>>, OrderDetailsDTO record
 - [order-service] added choreo-common dependency to pom.xml; created repositories: PurchaseOrderRepository (with findByOrderIdAndStatus()), OrderPaymentRepository (with findByOrderId()), OrderInventoryRepository (with findByOrderId()); implemented EntityDTOMapper with bidirectional transformations: toPurchaseOrder(OrderCreateRequest) calculates amount and sets PENDING status, toPurchaseOrderDTO(PurchaseOrder), toOrderPayment(OrderPaymentDTO), toOrderPaymentDTO(OrderPayment), toOrderInventory(OrderInventoryDTO), toOrderInventoryDTO(OrderInventory); Pattern follows orderId-based saga correlation via status-based queries, static utility methods for stateless transformations, builder pattern for immutable construction
 - [order-service] added data.sql
 - implemented test artifacts at src/test/java at pkg: jayslabs.kafka.shipping: AbstractIntegrationTest, TestDataUtil, ShippingService
