@@ -7,6 +7,8 @@ import jayslabs.kafka.order.common.dto.OrderInventoryDTO;
 import jayslabs.kafka.order.common.dto.OrderPaymentDTO;
 import jayslabs.kafka.order.common.dto.OrderCreateRequest;
 import jayslabs.kafka.order.common.dto.PurchaseOrderDTO;
+import jayslabs.kafka.order.common.dto.OrderDetailsDTO;
+
 import jayslabs.kafka.common.events.order.OrderStatus;
 
 public class EntityDTOMapper {
@@ -74,6 +76,14 @@ public class EntityDTOMapper {
             .orderId(entity.getOrderId())
             .status(entity.getStatus())
             .message(entity.getMessage())
+            .build();
+    }
+
+    public static OrderDetailsDTO toOrderDetailsDTO(PurchaseOrderDTO orderDTO, OrderPaymentDTO paymentDTO, OrderInventoryDTO inventoryDTO) {
+        return OrderDetailsDTO.builder()
+            .order(orderDTO)
+            .payment(paymentDTO)
+            .inventory(inventoryDTO)
             .build();
     }
 }

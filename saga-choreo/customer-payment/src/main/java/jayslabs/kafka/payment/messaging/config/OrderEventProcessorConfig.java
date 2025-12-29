@@ -32,6 +32,17 @@ public class OrderEventProcessorConfig {
     */
     private final OrderEventProcessor<PaymentEvent> evtProcessor;
 
+    /*
+    Kafka Topic: order-events
+        ↓ (Spring Cloud Stream reads)
+    processor-in-0 binding
+        ↓ (passes to)
+    Function<Flux<Message<OrderEvent>>, Flux<Message<PaymentEvent>>> processor()
+        ↓ (emits result)
+    processor-out-0 binding
+        ↓ (publishes to)
+    Kafka Topic: payment-events
+    */
     @Bean 
     public Function<Flux<Message<OrderEvent>>, Flux<Message<PaymentEvent>>> processor(){
         return flux -> flux.map(MessageConverter::toRecord) //Flux<CustomRecord<OrderEvent>>
