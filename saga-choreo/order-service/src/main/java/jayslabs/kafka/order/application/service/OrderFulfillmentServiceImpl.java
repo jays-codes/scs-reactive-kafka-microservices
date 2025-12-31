@@ -20,7 +20,15 @@ public class OrderFulfillmentServiceImpl implements OrderFulfillmentService{
 
     @Override
     public Mono<PurchaseOrderDTO> completeOrder(UUID orderId) {
-        return Mono.empty();
+        /*
+        1. PurchaseOrder status must be PENDING
+        2. Inventory and Payment components must be SUCCESS
+        
+        */
+        return this.porepo.getWhenOrderComponentsAreSuccess(orderId)
+        .doOnNext(entity -> entity.setStatus(OrderStatus.COMPLETED))
+        .flatMap(this.porepo::save)
+        .map(EntityDTOMapper::toPurchaseOrderDTO);
     }
 
     @Override
