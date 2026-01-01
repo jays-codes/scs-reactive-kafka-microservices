@@ -6,7 +6,7 @@ import java.util.UUID;
 import lombok.Builder;
 
 @Builder
-public record OrderShippingDTO(
+public record OrderShipmentDTO(
     UUID orderId,
     Instant deliveryDate
 ) {
