@@ -21,7 +21,6 @@ import reactor.core.publisher.Mono;
     for downstream services, handle Kafka-specific concerns (acknowledgment, 
     error handling), maintain reactive flow integrity; 
     
-    TODO: OrderCancelled → processRefund() compensation flow, 
     OrderCompleted → no-op terminal event; 
     
     Pattern demonstrates enterprise event-driven messaging layer: clean separation 

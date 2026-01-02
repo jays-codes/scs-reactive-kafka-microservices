@@ -13,6 +13,7 @@ import jayslabs.kafka.order.common.service.payment.PaymentComponentStatusListene
 import lombok.RequiredArgsConstructor;
 import reactor.core.publisher.Mono;
 
+
 @Service
 @RequiredArgsConstructor
 public class PaymentComponentServiceImpl implements PaymentComponentFetcher, PaymentComponentStatusListener {
@@ -28,6 +29,12 @@ public class PaymentComponentServiceImpl implements PaymentComponentFetcher, Pay
         .defaultIfEmpty(DEFAULT_DTO);
     }
 
+/*
+Updates local copy of payment status in order_payment table 
+by ADDING a new record with success=true
+when payment is successful, and assumes no record yet 
+exists in the table for the given orderId
+*/
     @Override
     public Mono<Void> onSuccess(OrderPaymentDTO event) {
         return this.pymtrepo.findByOrderId(event.orderId())
@@ -35,6 +42,12 @@ public class PaymentComponentServiceImpl implements PaymentComponentFetcher, Pay
         .then();
     }
 
+/*
+Updates local copy of payment status in order_payment table 
+by ADDING a new record with success=false
+when payment is failed, and assumes no record yet 
+exists in the table for the given orderId
+*/
     @Override
     public Mono<Void> onFailure(OrderPaymentDTO event) {
         return this.pymtrepo.findByOrderId(event.orderId())
@@ -42,6 +55,11 @@ public class PaymentComponentServiceImpl implements PaymentComponentFetcher, Pay
         .then();
     }
     
+/*
+Updates local copy of payment status in order_payment table
+by UPDATING the existing record with status in eventDTO,
+for the given orderId
+*/
     @Override
     public Mono<Void> onRollback(OrderPaymentDTO event) {
         return this.pymtrepo.findByOrderId(event.orderId())
