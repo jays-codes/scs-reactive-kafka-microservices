@@ -26,9 +26,16 @@ public class InventoryEventProcessorImpl implements InventoryEventProcessor<Orde
     @Override
     public Mono<OrderEvent> handle(InventoryEvent.InventoryDeducted event) {
         var dto = InventoryEventMapper.toOrderInventoryDTO(event);
-        return this.statusListener.onSuccess(dto)
-        .then(this.fulfillmentService.completeOrder(event.orderId()))
-        //.doOnNext(evt -> log.info("Inventory deducted successfully for orderId: {}", evt.orderId()))
+
+        //line below updates order_inventory table (component tracking) by
+        //invoking onSuccess() in InventoryComponentServiceImpl
+        return this.statusListener.onSuccess(dto) 
+
+        //line below invokes completeOrder() in OrderFulfillmentServiceImpl
+        //which updates purchase_order table (order tracking) to COMPLETED
+        //if inventory is deducted successfully and payment is deducted successfully
+        //else Mono.empty() is returned
+        .then(this.fulfillmentService.completeOrder(event.orderId())) 
         .map(OrderEventMapper::toOrderCompletedEvent);
     }
     
@@ -44,7 +51,35 @@ public class InventoryEventProcessorImpl implements InventoryEventProcessor<Orde
     public Mono<OrderEvent> handle(InventoryEvent.InventoryRestored event) {
         var dto = InventoryEventMapper.toOrderInventoryDTO(event);
         return this.statusListener.onRollback(dto)
-        .then(this.fulfillmentService.completeOrder(event.orderId()))
-        .map(OrderEventMapper::toOrderCompletedEvent);
+        .then(Mono.empty());
     }
 }
+
+/*
+┌─────────────────────────────────────────────────────────────────┐
+│                     INVENTORY SERVICE                           │
+│  (Processes inventory reservation/restoration)                  │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓ publishes
+┌─────────────────────────────────────────────────────────────────┐
+│              Kafka Topic: inventory-events                      │
+│  (InventoryDeducted, InventoryFailed, InventoryRestored)        │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓ consumes
+┌─────────────────────────────────────────────────────────────────┐
+│                 ORDER SERVICE (Saga Coordinator)                │
+├─────────────────────────────────────────────────────────────────┤
+│  InventoryEventProcessorConfig                                  │
+│    ↓ (Spring Cloud Stream Function)                             │
+│  InventoryEventProcessorImpl ← YOU ARE HERE                     │
+│    ├─ Consumes InventoryEvent                                   │
+│    ├─ Updates order_inventory table (component tracking)        │
+│    ├─ Decides: Complete or Cancel order?                        │
+│    └─ Emits OrderEvent (OrderCompleted/OrderCancelled)          │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓ publishes
+┌─────────────────────────────────────────────────────────────────┐
+│              Kafka Topic: order-events                          │
+│  (OrderCompleted, OrderCancelled)                               │
+└─────────────────────────────────────────────────────────────────┘
+*/
