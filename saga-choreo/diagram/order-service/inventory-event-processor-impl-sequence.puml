@@ -1,0 +1,320 @@
+@startuml InventoryEventProcessorImpl Sequence Diagram - Part 1
+
+title InventoryEventProcessorImpl - Reactive Processing Flow (Part 1: Success & Failure Scenarios)
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 200
+
+' ==========================================
+' PARTICIPANTS
+' ==========================================
+
+box "Kafka Infrastructure" #LightGray
+    participant "Kafka Topic\n(inventory-events)" as KafkaTopic
+    participant "Spring Cloud\nStream" as SCS
+end box
+
+box "Messaging Layer (Order Service)" #LightGreen
+    participant "InventoryEventProcessorConfig" as Config
+    participant "MessageConverter" as Converter
+    participant "InventoryEventProcessorImpl" as Processor
+    participant "InventoryEventMapper" as Mapper
+    participant "OrderEventMapper" as OrderMapper
+end box
+
+box "Service Layer (Order Service)" #LightBlue
+    participant "InventoryComponentServiceImpl" as ComponentService
+    participant "OrderFulfillmentServiceImpl" as FulfillmentService
+end box
+
+box "Data Layer (Order Service)" #LightCoral
+    participant "OrderInventoryRepository" as InvRepo
+    participant "PurchaseOrderRepository" as PORepo
+    participant "OrderPaymentRepository" as PymtRepo
+end box
+
+box "Kafka Infrastructure" #LightGray
+    participant "Kafka Topic\n(order-events)" as OrderTopic
+end box
+
+' ==========================================
+' SCENARIO 1: INVENTORY DEDUCTED (Success Path)
+' ==========================================
+
+== Scenario 1: Inventory Deducted (Order Completion) ==
+
+KafkaTopic -> SCS : Message<InventoryEvent.InventoryDeducted>\n(orderId=abc-123, inventoryId=inv-456, productId=100, qty=2)
+activate SCS
+
+SCS -> Config : Flux<Message<InventoryEvent>>
+activate Config
+
+note over Config
+  **inventoryProcessor() Bean**
+  Function<Flux<Message<InventoryEvent>>,
+           Flux<Message<OrderEvent>>>
+end note
+
+Config -> Converter : MessageConverter.toRecord(message)
+activate Converter
+
+note right of Converter
+  Extract from Message<T>:
+  • key (KafkaHeaders.RECEIVED_KEY)
+  • payload (InventoryEvent)
+  • acknowledgement (ReceiverOffset)
+end note
+
+Converter --> Config : CustomRecord<InventoryEvent>\n(key="abc-123", message=InventoryDeducted, ack=ReceiverOffset)
+deactivate Converter
+
+Config -> Config : doOnNext(log.info("order-service received inventory event..."))
+
+Config -> Processor : evtProcessor.process(InventoryEvent.InventoryDeducted)
+activate Processor
+
+note over Processor
+  **Pattern Matching Router**
+  switch(event) {
+    case InventoryDeducted e -> handle(e)
+    case InventoryFailed e -> handle(e)
+    case InventoryRestored e -> handle(e)
+  }
+end note
+
+Processor -> Mapper : toOrderInventoryDTO(InventoryDeducted)
+activate Mapper
+Mapper --> Processor : OrderInventoryDTO\n(orderId=abc-123, inventoryId=inv-456, status=DEDUCTED)
+deactivate Mapper
+
+Processor -> ComponentService : statusListener.onSuccess(OrderInventoryDTO)
+activate ComponentService
+
+note over ComponentService
+  **Idempotency Check + Insert**
+  Query-before-insert pattern
+end note
+
+ComponentService -> InvRepo : findByOrderId(abc-123)
+activate InvRepo
+InvRepo --> ComponentService : Mono.empty() (not found - first time)
+deactivate InvRepo
+
+ComponentService -> ComponentService : switchIfEmpty(Mono.defer(() -> add(dto, true)))
+
+note over ComponentService
+  add() method:
+  1. EntityDTOMapper.toOrderInventory(dto)
+  2. entity.setSuccess(true)
+  3. invRepo.save(entity)
+end note
+
+ComponentService -> InvRepo : save(OrderInventory)\n(orderId=abc-123, inventoryId=inv-456, success=true)
+activate InvRepo
+InvRepo --> ComponentService : Mono<OrderInventory>
+deactivate InvRepo
+
+ComponentService -> ComponentService : .then() → Mono<Void>
+
+ComponentService --> Processor : Mono<Void> (completion signal)
+deactivate ComponentService
+
+Processor -> FulfillmentService : fulfillmentService.completeOrder(abc-123)
+activate FulfillmentService
+
+note over FulfillmentService
+  **Database-Level Aggregation**
+  Atomic check: PENDING + payment.success + inventory.success
+end note
+
+FulfillmentService -> PORepo : getWhenOrderComponentsAreSuccess(abc-123)
+activate PORepo
+
+note right of PORepo
+  Custom SQL Query:
+  SELECT po.*
+  FROM purchase_order po
+  WHERE po.order_id = 'abc-123'
+    AND po.status = 'PENDING'
+    AND EXISTS (
+      SELECT 1
+      FROM order_payment op,
+           order_inventory oi
+      WHERE op.order_id = po.order_id
+        AND oi.order_id = po.order_id
+        AND op.success = true
+        AND oi.success = true
+    )
+end note
+
+PORepo --> FulfillmentService : Mono<PurchaseOrder>\n(orderId=abc-123, status=PENDING)
+deactivate PORepo
+
+note over FulfillmentService #AAFFAA
+  **All Conditions Met:**
+  ✓ Order is PENDING
+  ✓ Payment succeeded (op.success=true)
+  ✓ Inventory succeeded (oi.success=true)
+end note
+
+FulfillmentService -> FulfillmentService : doOnNext(entity.setStatus(COMPLETED))
+
+FulfillmentService -> PORepo : save(PurchaseOrder)\n(status: PENDING → COMPLETED)
+activate PORepo
+PORepo --> FulfillmentService : Mono<PurchaseOrder>
+deactivate PORepo
+
+FulfillmentService -> FulfillmentService : map(EntityDTOMapper::toPurchaseOrderDTO)
+
+FulfillmentService --> Processor : Mono<PurchaseOrderDTO>\n(orderId=abc-123, status=COMPLETED)
+deactivate FulfillmentService
+
+Processor -> OrderMapper : toOrderCompletedEvent(PurchaseOrderDTO)
+activate OrderMapper
+OrderMapper --> Processor : OrderEvent.OrderCompleted\n(orderId=abc-123, createdAt=now())
+deactivate OrderMapper
+
+Processor --> Config : Mono<OrderEvent.OrderCompleted>
+deactivate Processor
+
+Config -> Config : doOnSuccess(cr.acknowledgement().acknowledge())
+note right: Kafka offset committed\nMessage won't be redelivered
+
+Config -> Config : toMessage(OrderEvent)
+note right
+  MessageBuilder.withPayload(evt)
+    .setHeader(KafkaHeaders.KEY, orderId)
+    .build()
+end note
+
+Config --> SCS : Flux<Message<OrderEvent>>
+deactivate Config
+
+SCS -> OrderTopic : Message<OrderEvent.OrderCompleted>\n(key="abc-123")
+deactivate SCS
+
+note over OrderTopic
+  **Downstream Services React:**
+  • Payment Service: No action (terminal event)
+  • Shipping Service: Triggers scheduleShipment()
+end note
+
+' ==========================================
+' SCENARIO 2: INVENTORY FAILED (Cancellation Path)
+' ==========================================
+
+== Scenario 2: Inventory Failed (Order Cancellation) ==
+
+KafkaTopic -> SCS : Message<InventoryEvent.InventoryFailed>\n(orderId=def-456, productId=200, message="Insufficient stock")
+activate SCS
+
+SCS -> Config : Flux<Message<InventoryEvent>>
+activate Config
+
+Config -> Converter : MessageConverter.toRecord(message)
+activate Converter
+Converter --> Config : CustomRecord<InventoryEvent>
+deactivate Converter
+
+Config -> Config : doOnNext(log.info(...))
+
+Config -> Processor : evtProcessor.process(InventoryEvent.InventoryFailed)
+activate Processor
+
+Processor -> Mapper : toOrderInventoryDTO(InventoryFailed)
+activate Mapper
+Mapper --> Processor : OrderInventoryDTO\n(orderId=def-456, status=DECLINED, message="Insufficient stock")
+deactivate Mapper
+
+Processor -> ComponentService : statusListener.onFailure(OrderInventoryDTO)
+activate ComponentService
+
+ComponentService -> InvRepo : findByOrderId(def-456)
+activate InvRepo
+InvRepo --> ComponentService : Mono.empty() (not found)
+deactivate InvRepo
+
+ComponentService -> ComponentService : switchIfEmpty(Mono.defer(() -> add(dto, false)))
+
+note over ComponentService
+  add() with success=false:
+  1. EntityDTOMapper.toOrderInventory(dto)
+  2. entity.setSuccess(false)
+  3. invRepo.save(entity)
+end note
+
+ComponentService -> InvRepo : save(OrderInventory)\n(orderId=def-456, status=DECLINED, success=false, message="Insufficient stock")
+activate InvRepo
+InvRepo --> ComponentService : Mono<OrderInventory>
+deactivate InvRepo
+
+ComponentService --> Processor : Mono<Void>
+deactivate ComponentService
+
+Processor -> FulfillmentService : fulfillmentService.cancelOrder(def-456)
+activate FulfillmentService
+
+note over FulfillmentService
+  **Simple Status Guard**
+  Only PENDING orders can be cancelled
+end note
+
+FulfillmentService -> PORepo : findByOrderIdAndStatus(def-456, PENDING)
+activate PORepo
+PORepo --> FulfillmentService : Mono<PurchaseOrder>\n(orderId=def-456, status=PENDING)
+deactivate PORepo
+
+FulfillmentService -> FulfillmentService : doOnNext(entity.setStatus(CANCELLED))
+
+FulfillmentService -> PORepo : save(PurchaseOrder)\n(status: PENDING → CANCELLED)
+activate PORepo
+PORepo --> FulfillmentService : Mono<PurchaseOrder>
+deactivate PORepo
+
+FulfillmentService -> FulfillmentService : map(EntityDTOMapper::toPurchaseOrderDTO)
+
+FulfillmentService --> Processor : Mono<PurchaseOrderDTO>\n(orderId=def-456, status=CANCELLED)
+deactivate FulfillmentService
+
+Processor -> OrderMapper : toOrderCancelledEvent(PurchaseOrderDTO)
+activate OrderMapper
+OrderMapper --> Processor : OrderEvent.OrderCancelled\n(orderId=def-456, createdAt=now())
+deactivate OrderMapper
+
+Processor --> Config : Mono<OrderEvent.OrderCancelled>
+deactivate Processor
+
+Config -> Config : doOnSuccess(cr.acknowledgement().acknowledge())
+
+Config -> Config : toMessage(OrderEvent)
+
+Config --> SCS : Flux<Message<OrderEvent>>
+deactivate Config
+
+SCS -> OrderTopic : Message<OrderEvent.OrderCancelled>\n(key="def-456")
+deactivate SCS
+
+note over OrderTopic
+  **Compensating Transactions Triggered:**
+  • Payment Service: processRefund() → PaymentRefunded
+  • Shipping Service: cancelShipment()
+end note
+
+' ==========================================
+' NOTES
+' ==========================================
+
+note over KafkaTopic, OrderTopic
+  **Key Concepts Demonstrated (Part 1)**
+  
+  1. **Saga Coordination**: Order Service acts as saga coordinator aggregating component statuses
+  2. **Database-Level Aggregation**: Custom SQL query checks ALL component statuses atomically
+  3. **Materialized View Pattern**: order_inventory table maintains local copy of inventory status
+  4. **Idempotency**: Query-before-insert pattern prevents duplicate component records
+  5. **Reactive Composition**: .then() chains component tracking with order fulfillment
+  6. **Status Guards**: Only PENDING orders can be completed/cancelled
+  
+  **See Part 2 for**: Inventory Restoration (Compensation) scenario
+end note
+
+@enduml

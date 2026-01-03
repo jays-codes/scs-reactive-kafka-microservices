@@ -1,0 +1,359 @@
+@startuml InventoryEventProcessorImpl Sequence Diagram - Part 2
+
+title InventoryEventProcessorImpl - Reactive Processing Flow (Part 2: Compensation & Edge Cases)
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 200
+
+' ==========================================
+' PARTICIPANTS
+' ==========================================
+
+box "Kafka Infrastructure" #LightGray
+    participant "Kafka Topic\n(inventory-events)" as KafkaTopic
+    participant "Spring Cloud\nStream" as SCS
+end box
+
+box "Messaging Layer (Order Service)" #LightGreen
+    participant "InventoryEventProcessorConfig" as Config
+    participant "MessageConverter" as Converter
+    participant "InventoryEventProcessorImpl" as Processor
+    participant "InventoryEventMapper" as Mapper
+end box
+
+box "Service Layer (Order Service)" #LightBlue
+    participant "InventoryComponentServiceImpl" as ComponentService
+end box
+
+box "Data Layer (Order Service)" #LightCoral
+    participant "OrderInventoryRepository" as InvRepo
+end box
+
+' ==========================================
+' SCENARIO 3: INVENTORY RESTORED (Compensation)
+' ==========================================
+
+== Scenario 3: Inventory Restored (Saga Compensation) ==
+
+KafkaTopic -> SCS : Message<InventoryEvent.InventoryRestored>\n(orderId=ghi-789, inventoryId=inv-999, productId=300, qty=1)
+activate SCS
+
+note over KafkaTopic
+  **Context:**
+  Order was cancelled due to payment failure.
+  Inventory service restores previously reserved stock.
+end note
+
+SCS -> Config : Flux<Message<InventoryEvent>>
+activate Config
+
+Config -> Converter : MessageConverter.toRecord(message)
+activate Converter
+Converter --> Config : CustomRecord<InventoryEvent>
+deactivate Converter
+
+Config -> Config : doOnNext(log.info("order-service received inventory event..."))
+
+Config -> Processor : evtProcessor.process(InventoryEvent.InventoryRestored)
+activate Processor
+
+note over Processor
+  **Pattern Matching**
+  case InventoryRestored e -> handle(e)
+end note
+
+Processor -> Mapper : toOrderInventoryDTO(InventoryRestored)
+activate Mapper
+Mapper --> Processor : OrderInventoryDTO\n(orderId=ghi-789, inventoryId=inv-999, status=RESTORED)
+deactivate Mapper
+
+Processor -> ComponentService : statusListener.onRollback(OrderInventoryDTO)
+activate ComponentService
+
+note over ComponentService
+  **Update Existing Record**
+  Restoration implies prior InventoryDeducted
+end note
+
+ComponentService -> InvRepo : findByOrderId(ghi-789)
+activate InvRepo
+InvRepo --> ComponentService : Mono<OrderInventory>\n(orderId=ghi-789, status=DEDUCTED, success=true)
+deactivate InvRepo
+
+ComponentService -> ComponentService : doOnNext(entity.setStatus(RESTORED))
+
+note over ComponentService
+  In-memory update:
+  entity.status = RESTORED
+end note
+
+ComponentService -> InvRepo : save(OrderInventory)\n(status: DEDUCTED → RESTORED)
+activate InvRepo
+InvRepo --> ComponentService : Mono<OrderInventory>
+deactivate InvRepo
+
+ComponentService -> ComponentService : .then() → Mono<Void>
+
+ComponentService --> Processor : Mono<Void>
+deactivate ComponentService
+
+Processor -> Processor : .then(Mono.empty())
+
+note over Processor #FFAAAA
+  **Terminal Event - No Outbound Event**
+  
+  Why Mono.empty()?
+  • Order already CANCELLED (by PaymentFailed)
+  • Restoration is audit trail only
+  • No further saga coordination needed
+end note
+
+Processor --> Config : Mono.empty()
+deactivate Processor
+
+note over Config
+  **Mono.empty() Handling**
+  
+  concatMap returns empty
+  → No element emitted
+  → doOnSuccess NOT called
+  → toMessage NOT called
+  
+  Flux continues for next events
+end note
+
+Config --> SCS : Flux<Message<OrderEvent>> (no element for this event)
+deactivate Config
+
+note over SCS
+  No message published
+  (compensation tracked locally)
+end note
+
+deactivate SCS
+
+' ==========================================
+' SCENARIO 4: DUPLICATE EVENT (Idempotency)
+' ==========================================
+
+== Scenario 4: Duplicate Inventory Event (Idempotency) ==
+
+KafkaTopic -> SCS : Message<InventoryEvent.InventoryDeducted>\n(orderId=abc-123, REDELIVERED)
+activate SCS
+
+note over KafkaTopic
+  **Kafka At-Least-Once Delivery**
+  Same event received twice
+  (network retry, consumer restart, etc.)
+end note
+
+SCS -> Config : Flux<Message<InventoryEvent>>
+activate Config
+
+Config -> Converter : MessageConverter.toRecord(message)
+activate Converter
+Converter --> Config : CustomRecord<InventoryEvent>
+deactivate Converter
+
+Config -> Config : doOnNext(log.info(...))
+
+Config -> Processor : evtProcessor.process(InventoryEvent.InventoryDeducted)
+activate Processor
+
+Processor -> Mapper : toOrderInventoryDTO(InventoryDeducted)
+activate Mapper
+Mapper --> Processor : OrderInventoryDTO
+deactivate Mapper
+
+Processor -> ComponentService : statusListener.onSuccess(OrderInventoryDTO)
+activate ComponentService
+
+ComponentService -> InvRepo : findByOrderId(abc-123)
+activate InvRepo
+InvRepo --> ComponentService : Mono<OrderInventory>\n**FOUND** (already exists!)
+deactivate InvRepo
+
+note over ComponentService #AAFFAA
+  **Idempotency Check Passes**
+  
+  Record already exists
+  → switchIfEmpty() NOT triggered
+  → add() method NOT called
+  → No duplicate INSERT
+end note
+
+ComponentService -> ComponentService : .then() → Mono<Void>
+
+ComponentService --> Processor : Mono<Void> (no-op completion)
+deactivate ComponentService
+
+Processor -> Processor : fulfillmentService.completeOrder(abc-123)
+
+note over Processor
+  **completeOrder() Called Again**
+  
+  Custom SQL query checks:
+  • po.status = 'PENDING'
+  • op.success = true
+  • oi.success = true
+end note
+
+note over Processor #FFAAAA
+  **Order Already Completed**
+  
+  Query returns Mono.empty()
+  (status is COMPLETED, not PENDING)
+  
+  → No status update
+  → No OrderCompleted event emitted
+end note
+
+Processor --> Config : Mono.empty()
+deactivate Processor
+
+Config --> SCS : Flux<Message<OrderEvent>> (no element)
+deactivate Config
+
+deactivate SCS
+
+note over KafkaTopic, InvRepo
+  **Idempotency Achieved:**
+  • Component tracking: Query-before-insert
+  • Order fulfillment: Status guard (PENDING only)
+  • Result: Safe to process same event multiple times
+end note
+
+' ==========================================
+' SCENARIO 5: RACE CONDITION (Payment & Inventory Simultaneous)
+' ==========================================
+
+== Scenario 5: Race Condition (Concurrent Component Success) ==
+
+note over KafkaTopic
+  **Scenario:**
+  PaymentDeducted and InventoryDeducted
+  arrive at nearly the same time
+end note
+
+activate Processor #LightGreen
+note over Processor: Thread 1: PaymentDeducted\nprocessing...
+
+activate Processor #LightBlue
+note over Processor: Thread 2: InventoryDeducted\nprocessing...
+
+Processor -> ComponentService : Thread 1: onSuccess(PaymentDTO)
+activate ComponentService #LightGreen
+
+Processor -> ComponentService : Thread 2: onSuccess(InventoryDTO)
+activate ComponentService #LightBlue
+
+ComponentService -> InvRepo : Thread 1: INSERT order_payment\n(success=true)
+activate InvRepo #LightGreen
+
+ComponentService -> InvRepo : Thread 2: INSERT order_inventory\n(success=true)
+activate InvRepo #LightBlue
+
+InvRepo --> ComponentService : Thread 1: Mono<OrderPayment>
+deactivate InvRepo
+
+InvRepo --> ComponentService : Thread 2: Mono<OrderInventory>
+deactivate InvRepo
+
+ComponentService --> Processor : Thread 1: Mono<Void>
+deactivate ComponentService
+
+ComponentService --> Processor : Thread 2: Mono<Void>
+deactivate ComponentService
+
+Processor -> PORepo : Thread 1: completeOrder()\ngetWhenOrderComponentsAreSuccess()
+activate PORepo #LightGreen
+
+note over PORepo #FFAAAA
+  **Thread 1 Query:**
+  
+  SELECT po.*
+  FROM purchase_order po
+  WHERE po.order_id = 'abc-123'
+    AND po.status = 'PENDING'
+    AND EXISTS (
+      SELECT 1 FROM order_payment WHERE success=true
+      -- ✓ Payment inserted
+    )
+    AND EXISTS (
+      SELECT 1 FROM order_inventory WHERE success=true
+      -- ✗ Inventory NOT YET inserted (Thread 2 still running)
+    )
+  
+  Result: Mono.empty() (conditions not met)
+end note
+
+PORepo --> Processor : Thread 1: Mono.empty()
+deactivate PORepo
+
+Processor --> Config : Thread 1: Mono.empty() (no event)
+deactivate Processor
+
+Processor -> PORepo : Thread 2: completeOrder()\ngetWhenOrderComponentsAreSuccess()
+activate PORepo #LightBlue
+
+note over PORepo #AAFFAA
+  **Thread 2 Query:**
+  
+  SELECT po.*
+  FROM purchase_order po
+  WHERE po.order_id = 'abc-123'
+    AND po.status = 'PENDING'
+    AND EXISTS (
+      SELECT 1 FROM order_payment WHERE success=true
+      -- ✓ Payment inserted
+    )
+    AND EXISTS (
+      SELECT 1 FROM order_inventory WHERE success=true
+      -- ✓ Inventory inserted
+    )
+  
+  Result: PurchaseOrder found (ALL conditions met!)
+end note
+
+PORepo --> Processor : Thread 2: Mono<PurchaseOrder>
+deactivate PORepo
+
+Processor -> PORepo : Thread 2: save(status=COMPLETED)
+activate PORepo #LightBlue
+PORepo --> Processor : Thread 2: Mono<PurchaseOrder>
+deactivate PORepo
+
+Processor --> Config : Thread 2: Mono<OrderEvent.OrderCompleted>
+deactivate Processor
+
+note over KafkaTopic, InvRepo
+  **Race Condition Handled:**
+  • Atomic SQL query ensures consistency
+  • Only one thread completes the order
+  • No duplicate OrderCompleted events
+  • Database-level coordination prevents race
+end note
+
+' ==========================================
+' NOTES
+' ==========================================
+
+note over KafkaTopic, InvRepo
+  **Key Concepts Demonstrated (Part 2)**
+  
+  1. **Saga Compensation**: InventoryRestored updates local status but emits no event (terminal)
+  2. **Idempotency**: Query-before-insert + status guards prevent duplicate processing
+  3. **Race Condition Handling**: Atomic SQL query coordinates concurrent component updates
+  4. **Graceful Degradation**: Mono.empty() for no-op scenarios (no crashes)
+  5. **Audit Trail**: All component state changes tracked in order_inventory table
+  6. **Eventually Consistent**: System tolerates temporary inconsistencies (out-of-order events)
+  
+  **Database Tables Involved:**
+  • order_inventory: Component status tracking (success, status, message)
+  • order_payment: Component status tracking (success, status, message)
+  • purchase_order: Main order status (PENDING → COMPLETED/CANCELLED)
+  
+  **See Part 1 for**: Success and Failure scenarios
+end note
+
+@enduml
