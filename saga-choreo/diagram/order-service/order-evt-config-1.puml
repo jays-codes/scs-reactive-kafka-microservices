@@ -1,0 +1,563 @@
+@startuml Order Event Configuration Flow - Part 1
+
+title Order Event Configuration - Complete Flow (Part 1: Order Creation → Success with Config Classes)
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 200
+
+' ==========================================
+' PARTICIPANTS
+' ==========================================
+
+box "Client Layer" #LightYellow
+    participant "REST Client" as Client
+    participant "OrderController" as Controller
+end box
+
+box "Service Layer (Order Service)" #LightBlue
+    participant "OrderServiceImpl" as OrderService
+    participant "OrderFulfillmentServiceImpl" as FulfillmentService
+    participant "PaymentComponentServiceImpl" as PymtComponentService
+    participant "InventoryComponentServiceImpl" as InvComponentService
+end box
+
+box "Data Layer (Order Service)" #LightCoral
+    participant "PurchaseOrderRepository" as PORepo
+    participant "OrderPaymentRepository" as PymtRepo
+    participant "OrderInventoryRepository" as InvRepo
+end box
+
+box "Messaging Config Layer" #LightPink
+    participant "OrderEventListenerConfig" as ListenerConfig
+    participant "ProcessorConfig" as ProcessorCfg
+    participant "AbstractOrderEventRouterConfig" as AbstractConfig
+end box
+
+box "Messaging Layer (Order Service)" #LightGreen
+    participant "OrderEventListenerImpl" as EventListener
+    participant "Sinks.Many<OrderEvent>" as Sink
+    participant "OrderEventMapper" as OrderMapper
+    participant "PaymentEventProcessorImpl" as PymtProcessor
+    participant "PaymentEventMapper" as PymtMapper
+    participant "InventoryEventProcessorImpl" as InvProcessor
+    participant "InventoryEventMapper" as InvMapper
+end box
+
+box "Kafka Infrastructure" #LightGray
+    participant "Kafka Topic\n(order-events)" as OrderTopic
+    participant "Kafka Topic\n(payment-events)" as PaymentTopic
+    participant "Kafka Topic\n(inventory-events)" as InvTopic
+    participant "Spring Cloud\nStream" as SCS
+end box
+
+box "External Services" #LightCyan
+    participant "Payment Service" as PaymentSvc
+    participant "Inventory Service" as InventorySvc
+end box
+
+' ==========================================
+' CONFIGURATION INITIALIZATION
+' ==========================================
+
+== Configuration Initialization (Application Startup) ==
+
+note over ListenerConfig
+  **OrderEventListenerConfig**
+  @Configuration class
+  Creates OrderEventListener bean
+end note
+
+ListenerConfig -> Sink : Create Sinks.Many<OrderEvent>\n.unicast().onBackpressureBuffer()
+activate Sink
+
+ListenerConfig -> EventListener : new OrderEventListenerImpl(sink, flux)
+activate EventListener
+
+note over EventListener
+  **OrderEventListenerImpl**
+  Implements:
+  • OrderEventListener (domain)
+  • EventPublisher<OrderEvent> (messaging)
+  
+  Injected with:
+  • Sinks.Many<OrderEvent>
+  • Flux<OrderEvent>
+end note
+
+EventListener --> ListenerConfig : OrderEventListener bean
+deactivate EventListener
+
+note over ProcessorCfg
+  **ProcessorConfig**
+  extends AbstractOrderEventRouterConfig
+  
+  Defines 4 Spring Cloud Stream functions:
+  • orderEventProducer()
+  • inventoryProcessor()
+  • paymentProcessor()
+  • shippingProcessor()
+end note
+
+ProcessorCfg -> AbstractConfig : Uses processor() template method
+activate AbstractConfig
+
+note over AbstractConfig
+  **AbstractOrderEventRouterConfig**
+  Template Method Pattern
+  
+  Provides:
+  • processor<T>(EventProcessor<T, OrderEvent>)
+  • toMessage(OrderEvent)
+  • Dynamic routing via headers
+end note
+
+AbstractConfig --> ProcessorCfg : Reactive pipeline template
+deactivate AbstractConfig
+
+note over ProcessorCfg, SCS
+  **Spring Cloud Stream Bindings:**
+  • orderEventProducer-out-0 → order-events
+  • paymentProcessor-in-0 ← payment-events
+  • inventoryProcessor-in-0 ← inventory-events
+  • shippingProcessor-in-0 ← shipping-events
+end note
+
+' ==========================================
+' SCENARIO 1: ORDER PLACEMENT
+' ==========================================
+
+== Scenario 1: Order Placement → Component Success → Order Completion ==
+
+Client -> Controller : POST /orders\nOrderCreateRequest(customerId=1, productId=100, qty=2, unitPrice=5)
+activate Controller
+
+Controller -> OrderService : placeOrder(OrderCreateRequest)
+activate OrderService
+
+note over OrderService
+  **Step 1: Entity Creation**
+  EntityDTOMapper.toPurchaseOrder(request)
+  • Calculate amount: qty * unitPrice = 10
+  • Set status: PENDING
+end note
+
+OrderService -> OrderService : EntityDTOMapper.toPurchaseOrder(request)
+
+OrderService -> PORepo : save(PurchaseOrder)
+activate PORepo
+
+note right of PORepo
+  INSERT INTO purchase_order
+  VALUES (
+    order_id = abc-123 (auto-generated),
+    customer_id = 1,
+    product_id = 100,
+    quantity = 2,
+    unit_price = 5,
+    amount = 10,
+    status = 'PENDING'
+  )
+end note
+
+PORepo --> OrderService : Mono<PurchaseOrder>\n(orderId=abc-123, status=PENDING)
+deactivate PORepo
+
+OrderService -> OrderService : map(EntityDTOMapper::toPurchaseOrderDTO)
+
+OrderService -> EventListener : doOnNext(ordEvtLstnr::emitOrderCreated(PurchaseOrderDTO))
+activate EventListener
+
+EventListener -> OrderMapper : toOrderCreatedEvent(PurchaseOrderDTO)
+activate OrderMapper
+
+note right of OrderMapper
+  Create OrderEvent.OrderCreated:
+  • orderId: abc-123
+  • customerId: 1
+  • productId: 100
+  • quantity: 2
+  • unitPrice: 5
+  • totalAmount: 10
+  • createdAt: Instant.now()
+end note
+
+OrderMapper --> EventListener : OrderEvent.OrderCreated
+deactivate OrderMapper
+
+EventListener -> Sink : sink.emitNext(OrderEvent.OrderCreated,\nEmitFailureHandler.busyLooping(1s))
+
+note over Sink
+  **Backpressure Handling**
+  busyLooping(Duration.ofSeconds(1))
+end note
+
+Sink --> EventListener : EmitResult.OK
+
+EventListener --> OrderService : void (side effect completed)
+deactivate EventListener
+
+OrderService --> Controller : Mono<PurchaseOrderDTO>\n(orderId=abc-123, status=PENDING)
+deactivate OrderService
+
+Controller --> Client : HTTP 201 Created\nPurchaseOrderDTO(orderId=abc-123, status=PENDING)
+deactivate Controller
+
+note over Client
+  **Client receives immediate response**
+  Order created but not yet completed
+  (async processing continues below)
+end note
+
+' ==========================================
+' KAFKA PUBLISHING FLOW WITH CONFIG
+' ==========================================
+
+== Kafka Publishing (Async via ProcessorConfig) ==
+
+Sink -> ProcessorCfg : Flux<OrderEvent> (from sink.asFlux())
+activate ProcessorCfg
+
+note over ProcessorCfg
+  **orderEventProducer() Bean**
+  Supplier<Flux<Message<OrderEvent>>>
+  
+  return () -> eventPublisher.publish()
+      .map(this::toMessage);
+end note
+
+ProcessorCfg -> AbstractConfig : toMessage(OrderEvent.OrderCreated)
+activate AbstractConfig
+
+note over AbstractConfig
+  **Dynamic Routing**
+  MessageBuilder.withPayload(evt)
+    .setHeader(KafkaHeaders.KEY, orderId)
+    .setHeader(DESTINATION_HEADER, "order-events-channel")
+    .build()
+end note
+
+AbstractConfig --> ProcessorCfg : Message<OrderEvent.OrderCreated>
+deactivate AbstractConfig
+
+ProcessorCfg -> SCS : Flux<Message<OrderEvent>>
+deactivate ProcessorCfg
+activate SCS
+
+note over SCS
+  **Spring Cloud Stream**
+  Function: orderEventProducer
+  Binding: orderEventProducer-out-0
+  Destination: order-events
+end note
+
+SCS -> OrderTopic : Message<OrderEvent.OrderCreated>\n(key=abc-123, payload=OrderCreated)
+deactivate SCS
+
+note over OrderTopic
+  **Saga Choreography Begins**
+  Multiple services consume in parallel
+end note
+
+' ==========================================
+' PARALLEL PROCESSING (PAYMENT & INVENTORY)
+' ==========================================
+
+== Parallel Processing (Payment & Inventory Services) ==
+
+OrderTopic -> PaymentSvc : OrderEvent.OrderCreated
+activate PaymentSvc
+note over PaymentSvc
+  **Payment Service Processing**
+  1. Validate customer
+  2. Check balance
+  3. Deduct payment
+  4. Emit PaymentDeducted event
+end note
+PaymentSvc --> PaymentTopic : PaymentEvent.PaymentDeducted\n(orderId=abc-123, paymentId=pmt-789)
+deactivate PaymentSvc
+
+OrderTopic -> InventorySvc : OrderEvent.OrderCreated
+activate InventorySvc
+
+note over InventorySvc
+  **Inventory Service Processing**
+  1. Validate stock availability
+  2. Reserve inventory
+  3. Emit InventoryDeducted event
+end note
+
+InventorySvc --> InvTopic : InventoryEvent.InventoryDeducted\n(orderId=abc-123, inventoryId=inv-456, productId=100, qty=2)
+deactivate InventorySvc
+
+' ==========================================
+' PAYMENT EVENT CONSUMPTION WITH CONFIG
+' ==========================================
+
+== Payment Event Consumption (Order Service via ProcessorConfig) ==
+
+PaymentTopic -> SCS : Message<PaymentEvent.PaymentDeducted>
+activate SCS
+
+note over SCS
+  **Spring Cloud Stream**
+  Function: paymentProcessor
+  Binding: paymentProcessor-in-0
+  Destination: payment-events
+end note
+
+SCS -> ProcessorCfg : Flux<Message<PaymentEvent>>
+activate ProcessorCfg
+
+note over ProcessorCfg
+  **paymentProcessor() Bean**
+  Function<Flux<Message<PaymentEvent>>,
+           Flux<Message<OrderEvent>>>
+  
+  Delegates to AbstractOrderEventRouterConfig
+end note
+
+ProcessorCfg -> AbstractConfig : processor(paymentEventProcessor)
+activate AbstractConfig
+
+note over AbstractConfig
+  **Template Method Pattern**
+  flux -> flux.map(MessageConverter::toRecord)
+    .doOnNext(log.info(...))
+    .concatMap(evtProcessor.process(...))
+    .doOnSuccess(acknowledge())
+    .map(this::toMessage)
+end note
+
+AbstractConfig -> PymtProcessor : evtProcessor.process(PaymentEvent.PaymentDeducted)
+deactivate AbstractConfig
+activate PymtProcessor
+
+note over PymtProcessor
+  **PaymentEventProcessorImpl**
+  Pattern matching switch:
+  case PaymentDeducted e -> handle(e)
+end note
+
+PymtProcessor -> PymtMapper : toOrderPaymentDTO(PaymentDeducted)
+activate PymtMapper
+PymtMapper --> PymtProcessor : OrderPaymentDTO\n(orderId=abc-123, paymentId=pmt-789, status=DEDUCTED)
+deactivate PymtMapper
+
+PymtProcessor -> PymtComponentService : statusListener.onSuccess(OrderPaymentDTO)
+activate PymtComponentService
+
+note over PymtComponentService
+  **Step 1: Component Tracking**
+  Materialized view update
+end note
+
+PymtComponentService -> PymtRepo : findByOrderId(abc-123)
+activate PymtRepo
+PymtRepo --> PymtComponentService : Mono.empty() (first time)
+deactivate PymtRepo
+
+PymtComponentService -> PymtComponentService : switchIfEmpty(Mono.defer(() -> add(dto, true)))
+
+PymtComponentService -> PymtRepo : save(OrderPayment)\n(orderId=abc-123, success=true, status=DEDUCTED)
+activate PymtRepo
+
+note right of PymtRepo
+  INSERT INTO order_payment
+  VALUES (
+    order_id = abc-123,
+    payment_id = pmt-789,
+    success = true,
+    status = 'DEDUCTED'
+  )
+end note
+
+PymtRepo --> PymtComponentService : Mono<OrderPayment>
+deactivate PymtRepo
+
+PymtComponentService --> PymtProcessor : Mono<Void>
+deactivate PymtComponentService
+
+PymtProcessor -> FulfillmentService : fulfillmentService.completeOrder(abc-123)
+activate FulfillmentService
+
+note over FulfillmentService #FFAAAA
+  **Race Condition Check**
+  
+  Payment arrived first, inventory not yet processed
+  → completeOrder() returns Mono.empty()
+  → No OrderCompleted event emitted yet
+end note
+
+FulfillmentService -> PORepo : getWhenOrderComponentsAreSuccess(abc-123)
+activate PORepo
+
+note right of PORepo
+  **Custom SQL Query:**
+  Checks:
+  • po.status = 'PENDING' ✓
+  • op.success = true ✓ (just inserted)
+  • oi.success = true ✗ (not yet inserted)
+  
+  Result: Mono.empty()
+end note
+
+PORepo --> FulfillmentService : Mono.empty() (conditions not met)
+deactivate PORepo
+
+FulfillmentService --> PymtProcessor : Mono.empty()
+deactivate FulfillmentService
+
+PymtProcessor --> ProcessorCfg : Mono.empty() (no event)
+deactivate PymtProcessor
+
+ProcessorCfg --> SCS : Mono.empty()
+deactivate ProcessorCfg
+deactivate SCS
+
+note over PaymentTopic
+  **No OrderCompleted event yet**
+  Waiting for inventory to complete
+end note
+
+' ==========================================
+' INVENTORY EVENT CONSUMPTION WITH CONFIG
+' ==========================================
+
+== Inventory Event Consumption (Order Service via ProcessorConfig) ==
+
+InvTopic -> SCS : Message<InventoryEvent.InventoryDeducted>
+activate SCS
+
+SCS -> ProcessorCfg : Flux<Message<InventoryEvent>>
+activate ProcessorCfg
+
+ProcessorCfg -> AbstractConfig : processor(inventoryEventProcessor)
+activate AbstractConfig
+
+AbstractConfig -> InvProcessor : evtProcessor.process(InventoryEvent.InventoryDeducted)
+deactivate AbstractConfig
+activate InvProcessor
+
+InvProcessor -> InvMapper : toOrderInventoryDTO(InventoryDeducted)
+activate InvMapper
+InvMapper --> InvProcessor : OrderInventoryDTO\n(orderId=abc-123, inventoryId=inv-456, status=DEDUCTED)
+deactivate InvMapper
+
+InvProcessor -> InvComponentService : statusListener.onSuccess(OrderInventoryDTO)
+activate InvComponentService
+
+InvComponentService -> InvRepo : findByOrderId(abc-123)
+activate InvRepo
+InvRepo --> InvComponentService : Mono.empty()
+deactivate InvRepo
+
+InvComponentService -> InvRepo : save(OrderInventory)\n(orderId=abc-123, success=true, status=DEDUCTED)
+activate InvRepo
+InvRepo --> InvComponentService : Mono<OrderInventory>
+deactivate InvRepo
+
+InvComponentService --> InvProcessor : Mono<Void>
+deactivate InvComponentService
+
+' ==========================================
+' ORDER COMPLETION
+' ==========================================
+
+== Order Completion (Inventory Arrives Last) ==
+
+InvProcessor -> FulfillmentService : fulfillmentService.completeOrder(abc-123)
+activate FulfillmentService
+
+FulfillmentService -> PORepo : getWhenOrderComponentsAreSuccess(abc-123)
+activate PORepo
+
+note right of PORepo
+  **Custom SQL Query:**
+  Checks:
+  • po.status = 'PENDING' ✓
+  • op.success = true ✓
+  • oi.success = true ✓
+  
+  ALL CONDITIONS MET!
+end note
+
+PORepo --> FulfillmentService : Mono<PurchaseOrder>\n(orderId=abc-123, status=PENDING)
+deactivate PORepo
+
+note over FulfillmentService #AAFFAA
+  **All Conditions Met:**
+  ✓ Order is PENDING
+  ✓ Payment succeeded
+  ✓ Inventory succeeded
+  
+  → Proceed with order completion
+end note
+
+FulfillmentService -> FulfillmentService : doOnNext(entity.setStatus(COMPLETED))
+
+FulfillmentService -> PORepo : save(PurchaseOrder)\n(status: PENDING → COMPLETED)
+activate PORepo
+PORepo --> FulfillmentService : Mono<PurchaseOrder>
+deactivate PORepo
+
+FulfillmentService --> InvProcessor : Mono<PurchaseOrderDTO>\n(orderId=abc-123, status=COMPLETED)
+deactivate FulfillmentService
+
+InvProcessor -> OrderMapper : toOrderCompletedEvent(PurchaseOrderDTO)
+activate OrderMapper
+OrderMapper --> InvProcessor : OrderEvent.OrderCompleted\n(orderId=abc-123)
+deactivate OrderMapper
+
+InvProcessor --> ProcessorCfg : Mono<OrderEvent.OrderCompleted>
+deactivate InvProcessor
+
+ProcessorCfg -> AbstractConfig : toMessage(OrderEvent.OrderCompleted)
+activate AbstractConfig
+
+note over AbstractConfig
+  **Dynamic Routing**
+  Sets DESTINATION_HEADER to "order-events-channel"
+end note
+
+AbstractConfig --> ProcessorCfg : Message<OrderEvent.OrderCompleted>
+deactivate AbstractConfig
+
+ProcessorCfg -> SCS : Flux<Message<OrderEvent>>
+deactivate ProcessorCfg
+
+SCS -> OrderTopic : Message<OrderEvent.OrderCompleted>\n(key=abc-123)
+deactivate SCS
+
+note over OrderTopic
+  **Downstream Services React:**
+  • Payment Service: No action (terminal event)
+  • Inventory Service: No action (terminal event)
+  • Shipping Service: scheduleShipment()
+end note
+
+' ==========================================
+' NOTES
+' ==========================================
+
+note over Client, InventorySvc
+  **Key Concepts Demonstrated (Part 1 with Config Classes)**
+  
+  1. **Configuration Layer**: OrderEventListenerConfig creates Sinks.Many bean factory
+  2. **Template Method Pattern**: AbstractOrderEventRouterConfig provides reusable pipeline
+  3. **Strategy Pattern**: ProcessorConfig defines 4 function beans using template
+  4. **Dynamic Routing**: Header-based routing to single order-events channel
+  5. **Saga Initiation**: OrderServiceImpl → EventListener → Sink → orderEventProducer()
+  6. **Parallel Processing**: Payment & Inventory services process simultaneously
+  7. **Component Tracking**: Materialized views via paymentProcessor/inventoryProcessor
+  8. **Race Condition Handling**: Database-level aggregation prevents duplicates
+  9. **Order Completion**: Last component triggers completion via SQL EXISTS check
+  
+  **Config Classes:**
+  • OrderEventListenerConfig: Factory for Sinks.Many + OrderEventListenerImpl
+  • AbstractOrderEventRouterConfig: Template for processor() + toMessage()
+  • ProcessorConfig: Concrete beans for all 4 Spring Cloud Stream functions
+  
+  **See Part 2 for**: Inventory Failure → Order Cancellation scenario
+end note
+
+@enduml

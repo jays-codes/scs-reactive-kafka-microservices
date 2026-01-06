@@ -17,14 +17,19 @@ import reactor.core.publisher.Sinks;
 //@Service
 // NOTE: @Service is intentionally omitted because Sinks.Many<OrderEvent> 
 // cannot be auto-injected by Spring. The sink is injected via constructor 
-// from a @Bean factory method in configuration.
+// from a @Bean factory method in OrderEventListenerConfig.
 @RequiredArgsConstructor
 public class OrderEventListenerImpl implements OrderEventListener, EventPublisher<OrderEvent> {
 
     private final static Logger log = LoggerFactory.getLogger(OrderEventListenerImpl.class);
 
-    private final Sinks.Many<OrderEvent> sink;
-    private final Flux<OrderEvent> flux;
+    private final Sinks.Many<OrderEvent> sink; //Where you drop events
+    private final Flux<OrderEvent> flux; //Stream that reads from sink
+    
+    //Constructor Injection: OrderEventListenerConfig.orderEventListener() 
+    // injects sink and flux from the bean factory method
+
+
 
     @Override
     public void emitOrderCreated(PurchaseOrderDTO dto) {
@@ -64,4 +69,35 @@ public class OrderEventListenerImpl implements OrderEventListener, EventPublishe
    └─ Payment Service: Listens to payment-events
    └─ Inventory Service: Listens to inventory-events
    └─ Shipping Service: Listens to shipping-events
+*/
+
+/*
+What happens at startup
+
+Application Start
+    ↓
+// Setting up the bean
+OrderEventListenerConfig.orderEventListener()
+    ↓
+1. Create Sinks.Many<OrderEvent> 
+   (Think of this as a "bucket" where you can drop events)
+    ↓
+2. Create Flux<OrderEvent> from sink
+   (Think of this as a "stream" that reads from the bucket)
+    ↓
+3. Create OrderEventListenerImpl(sink, flux)
+    ↓
+4. Spring registers this as the OrderEventListener bean
+    ↓
+
+// Actual usage
+5. When OrderServiceImpl.placeOrder() is called, it emits an OrderEvent.OrderCreated
+    ↓
+6. OrderEventListenerImpl.emitOrderCreated() is called
+    ↓
+7. OrderEvent.OrderCreated is emitted to the sink
+    ↓
+8. Flux<OrderEvent> is updated to include the new event
+    ↓
+9. Spring Cloud Stream consumes the event from the flux and publishes it to the order-events topic
 */

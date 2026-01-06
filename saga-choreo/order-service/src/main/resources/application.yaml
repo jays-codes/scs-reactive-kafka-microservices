@@ -1,17 +1,27 @@
 spring:
   cloud:
     function:
-      definition: processor
+      definition: orderEventProducer;inventoryProcessor;paymentProcessor;shippingProcessor
     stream:
       default:
         producer:
           useNativeEncoding: true
       bindings:
-        processor-in-0:
+        order-events-channel:
           destination: order-events
-          group: inventory-group
-        processor-out-0:
+        paymentProcessor-in-0:
+          destination: payment-events
+          group: order-service-group
+        # paymentProcessor-out-0:
+        #   destination: order-events
+        inventoryProcessor-in-0:
           destination: inventory-events
+          group: order-service-group
+        # inventoryProcessor-out-0:
+        #   destination: order-events
+        shippingProcessor-in-0:
+          destination: shipping-events
+          group: order-service-group
       kafka:
         binder:
           consumer-properties:
