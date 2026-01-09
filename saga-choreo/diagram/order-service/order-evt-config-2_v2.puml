@@ -1,0 +1,759 @@
+@startuml Order Event Configuration Flow - Part 2 v2
+
+title Order Event Configuration - Complete Flow v2 (Part 2: Order Creation → Inventory Failure → Cancellation with Retry)
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 200
+
+' ==========================================
+' PARTICIPANTS
+' ==========================================
+
+box "Client Layer" #LightYellow
+    participant "REST Client" as Client
+    participant "OrderController" as Controller
+end box
+
+box "Service Layer (Order Service)" #LightBlue
+    participant "OrderServiceImpl" as OrderService
+    participant "OrderFulfillmentServiceImpl" as FulfillmentService
+    participant "PaymentComponentServiceImpl" as PymtComponentService
+    participant "InventoryComponentServiceImpl" as InvComponentService
+end box
+
+box "Data Layer (Order Service)" #LightCoral
+    participant "PurchaseOrderRepository" as PORepo
+    participant "OrderPaymentRepository" as PymtRepo
+    participant "OrderInventoryRepository" as InvRepo
+end box
+
+box "Messaging Config Layer" #LightPink
+    participant "OrderEventListenerConfig" as ListenerConfig
+    participant "ProcessorConfig" as ProcessorCfg
+    participant "AbstractOrderEventRouterConfig" as AbstractConfig
+end box
+
+box "Messaging Layer (Order Service)" #LightGreen
+    participant "OrderEventListenerImpl" as EventListener
+    participant "Sinks.Many<OrderEvent>" as Sink
+    participant "OrderEventMapper" as OrderMapper
+    participant "PaymentEventProcessorImpl" as PymtProcessor
+    participant "PaymentEventMapper" as PymtMapper
+    participant "InventoryEventProcessorImpl" as InvProcessor
+    participant "InventoryEventMapper" as InvMapper
+end box
+
+box "Kafka Infrastructure" #LightGray
+    participant "Kafka Topic\n(order-events)" as OrderTopic
+    participant "Kafka Topic\n(payment-events)" as PaymentTopic
+    participant "Kafka Topic\n(inventory-events)" as InvTopic
+    participant "Spring Cloud\nStream" as SCS
+end box
+
+box "External Services" #LightCyan
+    participant "Payment Service" as PaymentSvc
+    participant "Inventory Service" as InventorySvc
+end box
+
+' ==========================================
+' SCENARIO 2: ORDER PLACEMENT → INVENTORY FAILURE
+' ==========================================
+
+== Scenario 2: Order Placement → Inventory Failure → Order Cancellation ==
+
+Client -> Controller : POST /orders\nOrderCreateRequest(customerId=1, productId=200, qty=50, unitPrice=10)
+activate Controller
+
+Controller -> OrderService : placeOrder(OrderCreateRequest)
+activate OrderService
+
+note over OrderService
+  **Step 1: Entity Creation**
+  EntityDTOMapper.toPurchaseOrder(request)
+  • Calculate amount: 50 * 10 = 500
+  • Set status: PENDING
+  • version: null (will be set to 0 on insert)
+end note
+
+OrderService -> PORepo : save(PurchaseOrder)
+activate PORepo
+
+note right of PORepo
+  INSERT INTO purchase_order
+  VALUES (
+    order_id = def-456 (auto-generated),
+    customer_id = 1,
+    product_id = 200,
+    quantity = 50,
+    unit_price = 10,
+    amount = 500,
+    status = 'PENDING',
+    version = 0
+  )
+end note
+
+PORepo --> OrderService : Mono<PurchaseOrder>\n(orderId=def-456, status=PENDING, version=0)
+deactivate PORepo
+
+OrderService -> EventListener : doOnNext(ordEvtLstnr::emitOrderCreated(PurchaseOrderDTO))
+activate EventListener
+
+EventListener -> OrderMapper : toOrderCreatedEvent(PurchaseOrderDTO)
+activate OrderMapper
+OrderMapper --> EventListener : OrderEvent.OrderCreated
+deactivate OrderMapper
+
+EventListener -> Sink : sink.emitNext(OrderEvent.OrderCreated)
+Sink --> EventListener : EmitResult.OK
+
+EventListener --> OrderService : void
+deactivate EventListener
+
+OrderService --> Controller : Mono<PurchaseOrderDTO>\n(orderId=def-456, status=PENDING)
+deactivate OrderService
+
+Controller --> Client : HTTP 201 Created\nPurchaseOrderDTO(orderId=def-456, status=PENDING)
+deactivate Controller
+
+' ==========================================
+' KAFKA PUBLISHING WITH CONFIG
+' ==========================================
+
+== Kafka Publishing (Async via ProcessorConfig) ==
+
+Sink -> ProcessorCfg : Flux<OrderEvent>
+activate ProcessorCfg
+
+ProcessorCfg -> AbstractConfig : toMessage(OrderEvent.OrderCreated)
+activate AbstractConfig
+
+note over AbstractConfig
+  **Dynamic Routing**
+  Sets KafkaHeaders.KEY = orderId
+  Sets DESTINATION_HEADER = "order-events-channel"
+end note
+
+AbstractConfig --> ProcessorCfg : Message<OrderEvent.OrderCreated>
+deactivate AbstractConfig
+
+ProcessorCfg -> SCS : Flux<Message<OrderEvent>>
+deactivate ProcessorCfg
+activate SCS
+
+SCS -> OrderTopic : Message<OrderEvent.OrderCreated>\n(key=def-456)
+deactivate SCS
+
+' ==========================================
+' PARALLEL PROCESSING (PAYMENT SUCCESS & INVENTORY FAILURE)
+' ==========================================
+
+== Parallel Processing (Payment Success, Inventory Failure) ==
+
+OrderTopic -> PaymentSvc : OrderEvent.OrderCreated
+activate PaymentSvc
+note over PaymentSvc
+  **Payment Service Processing**
+  1. Validate customer ✓
+  2. Check balance ✓
+  3. Deduct payment ✓
+  4. Emit PaymentDeducted event
+end note
+PaymentSvc --> PaymentTopic : PaymentEvent.PaymentDeducted\n(orderId=def-456, paymentId=pmt-789)
+deactivate PaymentSvc
+
+OrderTopic -> InventorySvc : OrderEvent.OrderCreated
+activate InventorySvc
+
+note over InventorySvc #FFAAAA
+  **Inventory Service Processing**
+  1. Check stock availability
+  2. Product 200: Available = 10
+  3. Requested = 50
+  4. ✗ Insufficient stock!
+  5. Emit InventoryFailed event
+end note
+
+InventorySvc --> InvTopic : InventoryEvent.InventoryFailed\n(orderId=def-456, productId=200, message="Insufficient stock")
+deactivate InventorySvc
+
+' ==========================================
+' PAYMENT SUCCESS (PARALLEL TO INVENTORY FAILURE)
+' ==========================================
+
+== Payment Event Consumption (Order Service via ProcessorConfig) ==
+
+note over PaymentTopic
+  **Meanwhile: Payment Succeeded**
+  Payment service processed successfully
+end note
+
+PaymentTopic -> SCS : Message<PaymentEvent.PaymentDeducted>
+activate SCS
+
+SCS -> ProcessorCfg : Flux<Message<PaymentEvent>>
+activate ProcessorCfg
+
+note over ProcessorCfg
+  **paymentProcessor() Bean**
+  Uses AbstractOrderEventRouterConfig.processor()
+end note
+
+ProcessorCfg -> AbstractConfig : processor(paymentEventProcessor)
+activate AbstractConfig
+
+note over AbstractConfig
+  **Template Method Pattern**
+  .map(MessageConverter::toRecord)
+  .concatMap(evtProcessor.process(...))
+  .doOnSuccess(acknowledge())
+end note
+
+AbstractConfig -> PymtProcessor : evtProcessor.process(PaymentEvent.PaymentDeducted)
+deactivate AbstractConfig
+activate PymtProcessor
+
+PymtProcessor -> PymtMapper : toOrderPaymentDTO(PaymentDeducted)
+activate PymtMapper
+PymtMapper --> PymtProcessor : OrderPaymentDTO\n(orderId=def-456, status=DEDUCTED)
+deactivate PymtMapper
+
+PymtProcessor -> PymtComponentService : statusListener.onSuccess(OrderPaymentDTO)
+activate PymtComponentService
+
+note over PymtComponentService
+  **Component Tracking**
+  Record payment success
+end note
+
+PymtComponentService -> PymtRepo : findByOrderId(def-456)
+activate PymtRepo
+PymtRepo --> PymtComponentService : Mono.empty()
+deactivate PymtRepo
+
+PymtComponentService -> PymtRepo : save(OrderPayment)\n(orderId=def-456, success=true, status=DEDUCTED)
+activate PymtRepo
+
+note right of PymtRepo
+  INSERT INTO order_payment
+  VALUES (
+    order_id = def-456,
+    payment_id = pmt-789,
+    success = true,
+    status = 'DEDUCTED'
+  )
+end note
+
+PymtRepo --> PymtComponentService : Mono<OrderPayment>
+deactivate PymtRepo
+
+PymtComponentService --> PymtProcessor : Mono<Void>
+deactivate PymtComponentService
+
+PymtProcessor -> FulfillmentService : fulfillmentService.completeOrder(def-456)
+activate FulfillmentService
+
+note over FulfillmentService #FFAAAA
+  **Cannot Complete Yet**
+  
+  Payment succeeded, but inventory failed
+  → Conditions not met
+  → Returns Mono.empty()
+end note
+
+FulfillmentService -> PORepo : getWhenOrderComponentsAreSuccess(def-456)
+activate PORepo
+
+note right of PORepo
+  Checks:
+  • po.status = 'PENDING' ✓
+  • op.success = true ✓
+  • oi.success = true ✗ (inventory failed)
+  
+  Result: Mono.empty()
+end note
+
+PORepo --> FulfillmentService : Mono.empty()
+deactivate PORepo
+
+FulfillmentService --> PymtProcessor : Mono.empty()
+deactivate FulfillmentService
+
+PymtProcessor --> ProcessorCfg : Mono.empty()
+deactivate PymtProcessor
+
+ProcessorCfg --> SCS : Mono.empty()
+deactivate ProcessorCfg
+deactivate SCS
+
+' ==========================================
+' INVENTORY FAILED EVENT CONSUMPTION
+' ==========================================
+
+== Inventory Failed Event Consumption (Order Service via ProcessorConfig) ==
+
+InvTopic -> SCS : Message<InventoryEvent.InventoryFailed>
+activate SCS
+
+SCS -> ProcessorCfg : Flux<Message<InventoryEvent>>
+activate ProcessorCfg
+
+note over ProcessorCfg
+  **inventoryProcessor() Bean**
+  Uses AbstractOrderEventRouterConfig.processor()
+end note
+
+ProcessorCfg -> AbstractConfig : processor(inventoryEventProcessor)
+activate AbstractConfig
+
+AbstractConfig -> InvProcessor : evtProcessor.process(InventoryEvent.InventoryFailed)
+deactivate AbstractConfig
+activate InvProcessor
+
+note over InvProcessor
+  **InventoryEventProcessorImpl**
+  Pattern matching switch:
+  case InventoryFailed e -> handle(e)
+end note
+
+InvProcessor -> InvMapper : toOrderInventoryDTO(InventoryFailed)
+activate InvMapper
+InvMapper --> InvProcessor : OrderInventoryDTO\n(orderId=def-456, status=DECLINED, message="Insufficient stock")
+deactivate InvMapper
+
+InvProcessor -> InvComponentService : statusListener.onFailure(OrderInventoryDTO)
+activate InvComponentService
+
+note over InvComponentService
+  **Step 1: Component Tracking**
+  Record failure in materialized view
+end note
+
+InvComponentService -> InvRepo : findByOrderId(def-456)
+activate InvRepo
+InvRepo --> InvComponentService : Mono.empty() (first time)
+deactivate InvRepo
+
+InvComponentService -> InvComponentService : switchIfEmpty(Mono.defer(() -> add(dto, false)))
+
+note over InvComponentService
+  add() with success=false:
+  1. EntityDTOMapper.toOrderInventory(dto)
+  2. entity.setSuccess(false)
+  3. entity.setMessage("Insufficient stock")
+  4. invRepo.save(entity)
+end note
+
+InvComponentService -> InvRepo : save(OrderInventory)\n(orderId=def-456, success=false, status=DECLINED, message="Insufficient stock")
+activate InvRepo
+
+note right of InvRepo
+  INSERT INTO order_inventory
+  VALUES (
+    order_id = def-456,
+    inventory_id = null,
+    success = false,
+    status = 'DECLINED',
+    message = 'Insufficient stock'
+  )
+end note
+
+InvRepo --> InvComponentService : Mono<OrderInventory>
+deactivate InvRepo
+
+InvComponentService --> InvProcessor : Mono<Void>
+deactivate InvComponentService
+
+' ==========================================
+' ORDER CANCELLATION WITH OPTIMISTIC LOCKING
+' ==========================================
+
+== Order Cancellation with Optimistic Locking & Retry ==
+
+InvProcessor -> FulfillmentService : fulfillmentService.cancelOrder(def-456)
+activate FulfillmentService
+
+note over FulfillmentService
+  **cancelOrder() Implementation**
+  return porepo.findByOrderIdAndStatus(orderId, PENDING)
+    .transform(updateStatus(CANCELLED))
+end note
+
+FulfillmentService -> PORepo : findByOrderIdAndStatus(def-456, PENDING)
+activate PORepo
+
+note right of PORepo
+  SELECT * FROM purchase_order
+  WHERE order_id = 'def-456'
+    AND status = 'PENDING'
+end note
+
+PORepo --> FulfillmentService : Mono<PurchaseOrder>\n(orderId=def-456, status=PENDING, version=0)
+deactivate PORepo
+
+note over FulfillmentService
+  **updateStatus(CANCELLED) Helper Method**
+  Function<Mono<PurchaseOrder>, Mono<PurchaseOrderDTO>>
+  
+  Pipeline:
+  1. doOnNext(po.setStatus(CANCELLED))
+  2. flatMap(porepo::save)
+  3. retryWhen(Retry.max(1)
+       .filter(OptimisticLockingFailureException))
+  4. map(EntityDTOMapper::toPurchaseOrderDTO)
+end note
+
+FulfillmentService -> FulfillmentService : doOnNext(entity.setStatus(CANCELLED))
+
+note over FulfillmentService
+  In-memory update:
+  entity.status = CANCELLED
+  entity.version = 0 (unchanged)
+end note
+
+FulfillmentService -> PORepo : save(PurchaseOrder)\n(status: PENDING → CANCELLED, version: 0 → 1)
+activate PORepo
+
+note right of PORepo
+  UPDATE purchase_order
+  SET status = 'CANCELLED',
+      version = 1
+  WHERE order_id = 'def-456'
+    AND version = 0
+  
+  **Optimistic Locking:**
+  • WHERE clause includes version check
+  • If version mismatch → 0 rows updated
+  • Throws OptimisticLockingFailureException
+end note
+
+PORepo --> FulfillmentService : Mono<PurchaseOrder>\n(orderId=def-456, status=CANCELLED, version=1)
+deactivate PORepo
+
+note over FulfillmentService #AAFFAA
+  **Update Successful (First Attempt)**
+  No retry needed
+end note
+
+FulfillmentService -> FulfillmentService : map(EntityDTOMapper::toPurchaseOrderDTO)
+
+FulfillmentService --> InvProcessor : Mono<PurchaseOrderDTO>\n(orderId=def-456, status=CANCELLED)
+deactivate FulfillmentService
+
+InvProcessor -> OrderMapper : toOrderCancelledEvent(PurchaseOrderDTO)
+activate OrderMapper
+
+note right of OrderMapper
+  Create OrderEvent.OrderCancelled:
+  • orderId: def-456
+  • message: "Order cancelled due to inventory failure"
+  • createdAt: Instant.now()
+end note
+
+OrderMapper --> InvProcessor : OrderEvent.OrderCancelled\n(orderId=def-456)
+deactivate OrderMapper
+
+InvProcessor --> ProcessorCfg : Mono<OrderEvent.OrderCancelled>
+deactivate InvProcessor
+
+ProcessorCfg -> AbstractConfig : toMessage(OrderEvent.OrderCancelled)
+activate AbstractConfig
+
+note over AbstractConfig
+  **Dynamic Routing**
+  Sets DESTINATION_HEADER to "order-events-channel"
+  All processors route output to same channel
+end note
+
+AbstractConfig --> ProcessorCfg : Message<OrderEvent.OrderCancelled>
+deactivate AbstractConfig
+
+ProcessorCfg -> SCS : Flux<Message<OrderEvent>>
+deactivate ProcessorCfg
+
+SCS -> OrderTopic : Message<OrderEvent.OrderCancelled>\n(key=def-456)
+deactivate SCS
+
+note over OrderTopic
+  **Compensating Transactions Triggered**
+  OrderCancelled event consumed by:
+  • Payment Service
+  • Shipping Service
+end note
+
+' ==========================================
+' COMPENSATING TRANSACTION (PAYMENT REFUND)
+' ==========================================
+
+== Compensating Transaction (Payment Refund) ==
+
+OrderTopic -> PaymentSvc : OrderEvent.OrderCancelled\n(orderId=def-456)
+activate PaymentSvc
+
+note over PaymentSvc
+  **Payment Service Compensation**
+  1. Find DEDUCTED payment (def-456)
+  2. Restore customer balance
+  3. Update payment status to REFUNDED
+  4. Emit PaymentRefunded event
+end note
+
+PaymentSvc --> PaymentTopic : PaymentEvent.PaymentRefunded\n(orderId=def-456, paymentId=pmt-789, amount=500)
+deactivate PaymentSvc
+
+note over OrderTopic
+  **Saga Compensation Complete**
+  • Payment refunded
+  • Order cancelled
+  • Inventory never reserved
+end note
+
+' ==========================================
+' RETRY SCENARIO (CONCURRENT UPDATE)
+' ==========================================
+
+== Alternative: Retry Scenario (Concurrent Update) ==
+
+note over InvTopic
+  **Concurrent Update Scenario**
+  Two threads try to cancel same order simultaneously
+  (e.g., duplicate InventoryFailed events)
+end note
+
+InvTopic -> SCS : Message<InventoryEvent.InventoryFailed>\n(orderId=ghi-789, CONCURRENT)
+activate SCS
+
+SCS -> ProcessorCfg : Flux<Message<InventoryEvent>> (Thread 1)
+activate ProcessorCfg
+
+ProcessorCfg -> InvProcessor : evtProcessor.process(InventoryEvent.InventoryFailed)
+activate InvProcessor
+
+InvProcessor -> InvComponentService : statusListener.onFailure(OrderInventoryDTO)
+activate InvComponentService
+InvComponentService --> InvProcessor : Mono<Void>
+deactivate InvComponentService
+
+InvProcessor -> FulfillmentService : fulfillmentService.cancelOrder(ghi-789)
+activate FulfillmentService
+
+FulfillmentService -> PORepo : findByOrderIdAndStatus(ghi-789, PENDING)
+activate PORepo
+PORepo --> FulfillmentService : Mono<PurchaseOrder>\n(orderId=ghi-789, status=PENDING, version=0)
+deactivate PORepo
+
+note over FulfillmentService, PORepo
+  **CONCURRENT Thread 2 also processing**
+  Both threads read same version=0
+end note
+
+FulfillmentService -> FulfillmentService : doOnNext(entity.setStatus(CANCELLED))
+
+FulfillmentService -> PORepo : save(PurchaseOrder) - Thread 1 FIRST
+activate PORepo
+
+note right of PORepo #AAFFAA
+  **Thread 1 Wins**
+  UPDATE purchase_order
+  SET status = 'CANCELLED', version = 1
+  WHERE order_id = 'ghi-789' AND version = 0
+  
+  → 1 row updated ✓
+end note
+
+PORepo --> FulfillmentService : Mono<PurchaseOrder>\n(orderId=ghi-789, status=CANCELLED, version=1)
+deactivate PORepo
+
+FulfillmentService --> InvProcessor : Mono<PurchaseOrderDTO>\n(orderId=ghi-789, status=CANCELLED)
+deactivate FulfillmentService
+deactivate InvProcessor
+deactivate ProcessorCfg
+deactivate SCS
+
+note over InvTopic
+  **Thread 1 Completed Successfully**
+end note
+
+' Thread 2 processing
+InvTopic -> SCS : (Thread 2 continues)
+activate SCS
+
+SCS -> ProcessorCfg : Flux<Message<InventoryEvent>> (Thread 2)
+activate ProcessorCfg
+
+ProcessorCfg -> InvProcessor : evtProcessor.process(InventoryEvent.InventoryFailed)
+activate InvProcessor
+
+InvProcessor -> InvComponentService : statusListener.onFailure(OrderInventoryDTO)
+activate InvComponentService
+InvComponentService --> InvProcessor : Mono<Void>
+deactivate InvComponentService
+
+InvProcessor -> FulfillmentService : fulfillmentService.cancelOrder(ghi-789)
+activate FulfillmentService
+
+FulfillmentService -> PORepo : findByOrderIdAndStatus(ghi-789, PENDING)
+activate PORepo
+
+note over PORepo #FFAAAA
+  **Thread 2 Query**
+  SELECT * FROM purchase_order
+  WHERE order_id = 'ghi-789' AND status = 'PENDING'
+  
+  → Mono.empty() (already CANCELLED by Thread 1)
+end note
+
+PORepo --> FulfillmentService : Mono.empty()
+deactivate PORepo
+
+note over FulfillmentService #AAFFAA
+  **Idempotent Cancellation**
+  Status guard prevents duplicate cancellation
+  No error thrown, just empty Mono
+end note
+
+FulfillmentService --> InvProcessor : Mono.empty()
+deactivate FulfillmentService
+
+InvProcessor --> ProcessorCfg : Mono.empty()
+deactivate InvProcessor
+
+ProcessorCfg --> SCS : Mono.empty()
+deactivate ProcessorCfg
+deactivate SCS
+
+note over InvTopic
+  **Thread 2 Completed (No-op)**
+  No event emitted
+  Idempotency achieved via status guard
+end note
+
+' ==========================================
+' OPTIMISTIC LOCKING RETRY SCENARIO
+' ==========================================
+
+== Alternative: Optimistic Locking Retry (Version Conflict) ==
+
+note over InvTopic
+  **Hypothetical Scenario:**
+  Thread 1 and Thread 2 both read version=0
+  Thread 1 updates first (version → 1)
+  Thread 2 attempts update with stale version=0
+end note
+
+activate FulfillmentService
+note over FulfillmentService
+  **Thread 2 Execution**
+  Already read PurchaseOrder(version=0)
+end note
+
+FulfillmentService -> FulfillmentService : doOnNext(entity.setStatus(CANCELLED))
+
+FulfillmentService -> PORepo : save(PurchaseOrder) - Thread 2 SECOND
+activate PORepo
+
+note right of PORepo #FFAAAA
+  **Thread 2 Fails (Version Conflict)**
+  UPDATE purchase_order
+  SET status = 'CANCELLED', version = 1
+  WHERE order_id = 'ghi-789' AND version = 0
+  
+  → 0 rows updated ✗
+  → OptimisticLockingFailureException thrown
+end note
+
+PORepo --> FulfillmentService : Mono.error(OptimisticLockingFailureException)
+deactivate PORepo
+
+note over FulfillmentService #FFAAAA
+  **Retry Triggered**
+  retryWhen(Retry.max(1)
+    .filter(OptimisticLockingFailureException))
+  
+  Retry count: 1/1
+end note
+
+FulfillmentService -> PORepo : findByOrderIdAndStatus(ghi-789, PENDING) - RETRY
+activate PORepo
+
+note right of PORepo
+  **Retry Query**
+  SELECT * FROM purchase_order
+  WHERE order_id = 'ghi-789' AND status = 'PENDING'
+  
+  → Mono.empty() (Thread 1 already changed to CANCELLED)
+end note
+
+PORepo --> FulfillmentService : Mono.empty()
+deactivate PORepo
+
+note over FulfillmentService #AAFFAA
+  **Retry Result: No-op**
+  Status guard prevents duplicate cancellation
+  Pipeline completes with Mono.empty()
+end note
+
+FulfillmentService --> InvProcessor : Mono.empty()
+deactivate FulfillmentService
+
+note over InvTopic
+  **Optimistic Locking + Retry Achieved:**
+  • Version conflict detected
+  • Retry attempted
+  • Status guard prevented duplicate
+  • No duplicate OrderCancelled event
+end note
+
+' ==========================================
+' NOTES
+' ==========================================
+
+note over Client, InventorySvc
+  **Key Concepts Demonstrated (Part 2 v2 with Optimistic Locking & Retry)**
+  
+  1. **Optimistic Locking**: @Version field prevents lost updates
+  2. **Retry Mechanism**: retryWhen(Retry.max(1).filter(OptimisticLockingFailureException))
+  3. **DRY Principle**: updateStatus() helper for both complete/cancel operations
+  4. **Reactive Composition**: Function<Mono<T>, Mono<R>> transformation pattern
+  5. **Configuration Layer**: ProcessorConfig defines all processor beans
+  6. **Template Method Pattern**: AbstractOrderEventRouterConfig provides reusable pipeline
+  7. **Dynamic Routing**: All processors route to single order-events-channel via headers
+  8. **Saga Initiation**: OrderServiceImpl → EventListener → orderEventProducer()
+  9. **Parallel Processing**: Payment succeeds, Inventory fails
+  10. **Component Tracking**: 
+     - PaymentComponentServiceImpl: order_payment (success=true)
+     - InventoryComponentServiceImpl: order_inventory (success=false)
+  11. **Partial Success Handling**: Payment completeOrder() returns empty (inventory failed)
+  12. **Order Cancellation**: Inventory failure → cancelOrder() → status=CANCELLED
+  13. **Compensating Transaction**: OrderCancelled → Payment Service refund
+  14. **Idempotency**: Status guard + optimistic locking prevent duplicates
+  15. **Retry Logic**: Handles OptimisticLockingFailureException gracefully
+  
+  **New in v2:**
+  • Optimistic locking with version field
+  • Retry mechanism for concurrent updates
+  • updateStatus() helper method for DRY
+  • Detailed retry scenario illustration
+  • Version conflict handling
+  
+  **Config Classes:**
+  • OrderEventListenerConfig: Factory for Sinks.Many + OrderEventListenerImpl
+  • AbstractOrderEventRouterConfig: Template for processor() + toMessage()
+  • ProcessorConfig: Concrete beans for paymentProcessor/inventoryProcessor/shippingProcessor
+  
+  **Flow Summary:**
+  Client → OrderService → EventListener → orderEventProducer() → order-events → 
+  Payment Service (SUCCESS) + Inventory Service (FAILS) → 
+  payment-events/inventory-events → 
+  paymentProcessor() (completeOrder=empty) + inventoryProcessor() (cancelOrder=success) → 
+  OrderCancelled Event → order-events → 
+  Payment Service (Refund) → payment-events
+  
+  **Database State After Failure:**
+  • purchase_order: status=CANCELLED, version=1
+  • order_payment: success=true, status=REFUNDED (after compensation)
+  • order_inventory: success=false, message="Insufficient stock"
+  
+  **See Part 1 for**: Successful order completion scenario with optimistic locking
+end note
+
+@enduml
