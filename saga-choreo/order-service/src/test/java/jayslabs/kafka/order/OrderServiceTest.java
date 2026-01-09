@@ -22,8 +22,8 @@ public class OrderServiceTest extends AbstractIntegrationTest{
         // simulate PaymentDeducted event sent from PaymentService
         emitEvent(PaymentEvent.PaymentDeducted.builder().orderId(ordId).build());
 
-        Thread.sleep(1_000);
-        
+        //Thread.sleep(1_000);
+
         // simulate InventoryDeducted event sent from InventoryService
         emitEvent(InventoryEvent.InventoryDeducted.builder().orderId(ordId).build());
 

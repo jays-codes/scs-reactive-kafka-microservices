@@ -97,7 +97,7 @@ public abstract class AbstractIntegrationTest {
 
     protected <T> void expectEvent(Class<T> type, Consumer<T> assertion){
         respFlux //start listening for response (InventoryEvent)
-           .next() //wait for Mono<InventoryEvent> to be emitted
+           //.next() //wait for Mono<InventoryEvent> to be emitted
            .timeout(Duration.ofSeconds(2), Mono.empty()) //timeout if no event is emitted in 2 second
            .cast(type) //cast InventoryEvent to the expected type (InventoryDeducted/InventoryRestored/InventoryFailed)
            .as(StepVerifier::create)
