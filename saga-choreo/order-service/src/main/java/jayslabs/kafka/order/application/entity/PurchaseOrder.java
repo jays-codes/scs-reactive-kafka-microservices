@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Version;
 
 import jayslabs.kafka.common.events.order.OrderStatus;
 import lombok.AllArgsConstructor;
@@ -26,4 +27,7 @@ public class PurchaseOrder {
     private Integer amount;
     private OrderStatus status;
     private Instant deliveryDate;
+
+    @Version
+    private Integer version;
 }
