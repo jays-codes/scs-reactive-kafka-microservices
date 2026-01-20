@@ -36,7 +36,7 @@ public class OrderController {
         return orderService.getAllOrders();
     }
 
-    @GetMapping("{id}")
+    @GetMapping("{orderId}")
     public Mono<OrderDetailsDTO> getOrderDetails(@PathVariable UUID orderId) {
         return orderService.getOrderDetails(orderId);
     }

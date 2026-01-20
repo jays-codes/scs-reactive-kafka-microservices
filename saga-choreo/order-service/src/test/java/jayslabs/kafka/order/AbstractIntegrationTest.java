@@ -24,6 +24,8 @@ import org.springframework.cloud.stream.function.StreamBridge;
 import jayslabs.kafka.common.events.payment.PaymentEvent;
 import jayslabs.kafka.common.events.inventory.InventoryEvent;
 import jayslabs.kafka.common.events.shipping.ShippingEvent;
+import jayslabs.kafka.order.common.dto.OrderDetailsDTO;
+
 
 @DirtiesContext
 @AutoConfigureWebTestClient
@@ -74,6 +76,22 @@ public abstract class AbstractIntegrationTest {
         .jsonPath("$.orderId").value(id -> ordIdRef.set(UUID.fromString(id.toString())))
         .jsonPath("$.status").isEqualTo("PENDING");
         return ordIdRef.get();
+    }
+
+    protected void verifyOrderDetails(UUID ordId, Consumer<OrderDetailsDTO> assertion){
+
+        var ordIdRef = new AtomicReference<UUID>();
+        var response = client.get()
+        .uri("/order/{orderId}", ordId)
+        .exchange()
+        .expectStatus().is2xxSuccessful()
+        .expectBody(OrderDetailsDTO.class)
+        .value(odto -> {
+            Assertions.assertEquals(ordId, odto.order().orderId());
+            Assertions.assertNotNull(odto.payment());
+            Assertions.assertNotNull(odto.inventory());
+            assertion.accept(odto);
+        });
     }
 
     protected void verifyOrderCreatedEvent(UUID ordId, int totalAmount){
