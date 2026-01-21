@@ -28,7 +28,7 @@ public class OrderEventProcessorImpl implements OrderEventProcessor<ShippingEven
     @Override
     public Mono<ShippingEvent> handle(OrderEvent.OrderCreated event) {
         return this.service.createShipmentRecord(EventDTOMapper.toCreateShippingRequest(event))
-        .doOnNext(v -> log.info("Shipment record created for orderId: {}", event.orderId()))
+        //.doOnNext(v -> log.info("Shipment record created for orderId: {}", event.orderId()))
         .transform(exceptionHandler())
         .then(Mono.empty());
     }
@@ -36,7 +36,7 @@ public class OrderEventProcessorImpl implements OrderEventProcessor<ShippingEven
     @Override
     public Mono<ShippingEvent> handle(OrderEvent.OrderCancelled event) {
         return this.service.cancelShipment(event.orderId())
-        .doOnNext(v -> log.info("Shipment cancelled for orderId: {}", event.orderId()))
+        //.doOnNext(v -> log.info("Shipment cancelled for orderId: {}", event.orderId()))
         .then(Mono.empty());
     }
     

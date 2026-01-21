@@ -2,6 +2,7 @@ package jayslabs.kafka.order.application.service;
 
 import org.springframework.stereotype.Service;
 
+import jayslabs.kafka.common.events.order.OrderStatus;
 import jayslabs.kafka.order.application.repository.PurchaseOrderRepository;
 import jayslabs.kafka.order.common.dto.OrderShipmentDTO;
 import jayslabs.kafka.order.common.service.shipping.ShippingComponentStatusListener;
@@ -22,7 +23,7 @@ public class ShippingComponentServiceImpl implements ShippingComponentStatusList
     */
     @Override
     public Mono<Void> onSuccess(OrderShipmentDTO event) {
-        return this.porepo.findById(event.orderId())
+        return this.porepo.findByOrderIdAndStatus(event.orderId(), OrderStatus.COMPLETED)
         .doOnNext(entity -> entity.setDeliveryDate(event.deliveryDate()))
         .flatMap(this.porepo::save)
         .then();
