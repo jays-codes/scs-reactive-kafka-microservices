@@ -10,6 +10,8 @@ import reactor.core.publisher.Flux;
 import jayslabs.kafka.common.events.order.OrderEvent;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.List;
+import org.springframework.core.ParameterizedTypeReference;
 import java.util.function.Consumer;
 import java.time.Duration;
 import reactor.core.publisher.Mono;
@@ -25,6 +27,7 @@ import jayslabs.kafka.common.events.payment.PaymentEvent;
 import jayslabs.kafka.common.events.inventory.InventoryEvent;
 import jayslabs.kafka.common.events.shipping.ShippingEvent;
 import jayslabs.kafka.order.common.dto.OrderDetailsDTO;
+import jayslabs.kafka.order.common.dto.PurchaseOrderDTO;
 
 
 @DirtiesContext
@@ -110,6 +113,19 @@ public abstract class AbstractIntegrationTest {
     protected void verifyOrderCompletedEvent(UUID ordId){
         expectEvent(OrderEvent.OrderCompleted.class, e -> {
             Assertions.assertEquals(ordId, e.orderId());
+        });
+    }
+
+    protected void verifyAllOrders(UUID... ordIds){
+        client.get()
+        .uri("/order/all")
+        .exchange()
+        .expectStatus().is2xxSuccessful()
+        .expectBody(new ParameterizedTypeReference<List<PurchaseOrderDTO>>() {
+
+        })
+        .value(pord -> {
+            Assertions.assertEquals(List.of(ordIds), pord.stream().map(PurchaseOrderDTO::orderId).toList());
         });
     }
 

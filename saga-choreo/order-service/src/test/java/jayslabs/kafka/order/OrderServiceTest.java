@@ -4,6 +4,7 @@ import java.time.Instant;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.annotation.DirtiesContext;
 
 import jayslabs.kafka.common.events.inventory.InventoryEvent;
 import jayslabs.kafka.common.events.inventory.InventoryStatus;
@@ -94,5 +95,29 @@ public class OrderServiceTest extends AbstractIntegrationTest{
             Assertions.assertEquals(PaymentStatus.DEDUCTED, odto.payment().status());
             Assertions.assertEquals(InventoryStatus.DECLINED, odto.inventory().status());
         });
+    }
+
+    @Test
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.BEFORE_METHOD) //clear context after test
+    public void getAllOrdersTest() throws InterruptedException{
+        // simulate OrderCreateRequest sent from OrderController
+        var req = TestDataUtil.toOrderCreateRequest(1, 1, 2, 3);
+        
+        // validate order in pending state
+        var ordId = initiateOrder(req);
+
+        // check for OrderCreated event
+        verifyOrderCreatedEvent(ordId, 6);
+
+        verifyAllOrders(ordId);
+
+        // validate order in pending state
+        var ordId2 = initiateOrder(req);
+
+        // check for OrderCreated event
+        verifyOrderCreatedEvent(ordId2, 6);
+
+        verifyAllOrders(ordId, ordId2);
+
     }
 }
