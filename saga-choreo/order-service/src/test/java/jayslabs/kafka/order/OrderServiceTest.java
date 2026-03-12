@@ -4,7 +4,6 @@ import java.time.Instant;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.annotation.DirtiesContext;
 
 import jayslabs.kafka.common.events.inventory.InventoryEvent;
 import jayslabs.kafka.common.events.inventory.InventoryStatus;
@@ -98,8 +97,8 @@ public class OrderServiceTest extends AbstractIntegrationTest{
     }
 
     @Test
-    @DirtiesContext(methodMode = DirtiesContext.MethodMode.BEFORE_METHOD) //clear context after test
-    public void getAllOrdersTest() throws InterruptedException{
+    public void compensatingTransactionTest() throws InterruptedException{
+
         // simulate OrderCreateRequest sent from OrderController
         var req = TestDataUtil.toOrderCreateRequest(1, 1, 2, 3);
         
@@ -109,15 +108,31 @@ public class OrderServiceTest extends AbstractIntegrationTest{
         // check for OrderCreated event
         verifyOrderCreatedEvent(ordId, 6);
 
-        verifyAllOrders(ordId);
+        // simulate Payment Declined event sent from PaymentService
+        emitEvent(PaymentEvent.PaymentFailed.builder().orderId(ordId).build());
 
-        // validate order in pending state
-        var ordId2 = initiateOrder(req);
+        // simulate InventoryDeducted event sent from InventoryService
+        emitEvent(InventoryEvent.InventoryDeducted.builder().orderId(ordId).build());
 
-        // check for OrderCreated event
-        verifyOrderCreatedEvent(ordId2, 6);
+        // check for OrderCancelled event
+        verifyOrderCancelledEvent(ordId);
 
-        verifyAllOrders(ordId, ordId2);
+        // emit inventory restored event
+        emitEvent(InventoryEvent.InventoryRestored.builder().orderId(ordId).build());
 
+        // verify order details via REST endpoint
+        // we might have to wait for sometime for streambridge to send and app to process
+        Thread.sleep(1_500);
+
+        //this.expectNoEvent();
+
+
+        // order details should not have delivery date
+        verifyOrderDetails(ordId, odto -> {
+            Assertions.assertNull(odto.order().deliveryDate());
+            Assertions.assertEquals(OrderStatus.CANCELLED, odto.order().status());
+            Assertions.assertEquals(PaymentStatus.FAILED, odto.payment().status());
+            Assertions.assertEquals(InventoryStatus.RESTORED, odto.inventory().status());
+        });
     }
 }

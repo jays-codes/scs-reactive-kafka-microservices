@@ -31,7 +31,11 @@ with saga pattern for distributed transaction management
 - shipping-service: Delivery scheduling
 
 ##### Changes
+<<<<<<< HEAD
 - added verifyAllOrders() in AIT; getAllOrdersTest() in OrderServiceTest; use of @DirtiesContext
+=======
+- updated OrderServiceTest with compensatingTransactionTest() - where PaymentFailed event sent but Inventory already deducted. Expected: OrderStatus.CANCELLED, PaymentStatus.FAILED, InventoryStatus.RESTORED
+>>>>>>> cf5fdd8d496549d300b20e40b7eefe8e91358212
 - updated OrderServiceTest with test Order Cancel integration test; updated bug in ShippingComponentServiceImpl
 - [BUGFIX] Created utility method verifyOrderDetails to call RESTController endpoint. Fixed OrderController path variable mismatch causing 500 Internal Server Error in integration tests; Changed @GetMapping path from "{id}" to "{orderId}" to match @PathVariable parameter name, resolving Spring's inability to bind path variable during GET /order/{orderId} requests; Issue manifested in OrderServiceTest.orderCompleteWorkflowTest() where verifyOrderDetails() failed with "Range for response status value 500 INTERNAL_SERVER_ERROR expected:<SUCCESSFUL> but was:<SERVER_ERROR>"; Root cause: Spring requires path variable name in @GetMapping annotation to match @PathVariable parameter name when no explicit name provided in annotation; Alternative fix would be @PathVariable("id") but changing path to {orderId} maintains consistency with parameter naming convention; Validates complete saga workflow now executes successfully: order creation → payment/inventory deduction → order completion → shipping scheduling → REST endpoint verification
 - updated sequence diagrams to include implementation of optimistic locking in order-service
