@@ -18,6 +18,6 @@ CREATE TABLE order_inventory (
 
 insert into product(description, available_quantity)
     values
-        ('book', 10),
-        ('pen', 10),
-        ('rug', 10);
+        ('book', 1000),
+        ('pen', 1000),
+        ('rug', 999);

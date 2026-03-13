@@ -18,6 +18,6 @@ CREATE TABLE customer_payment (
 
 insert into customer(name, balance)
     values
-        ('anya', 100),
-        ('becky', 100),
-        ('bondo', 100);
+        ('anya', 1000),
+        ('becky', 999),
+        ('bondo', 1000);
